@@ -97,7 +97,6 @@ static bool            g_trayActive = false;
 
 // Wallpaper
 static HWND g_workerW = nullptr;
-static HWND g_mirror = nullptr;   // mirror window inside WorkerW
 static HWND g_msgWnd = nullptr;   // hidden top-level window for tray & menu
 
 // Embedded assets (single-exe mode)
@@ -239,24 +238,28 @@ static void ipc_dispatch(LPCWSTR raw) {
 //  Wallpaper embedding — place window behind desktop icons
 // ================================================================
 
-// Clean up stale WorkerW from a previous crash/force-kill
-static void cleanupStaleWorkerW() {
-    HWND progman = FindWindowW(L"Progman", nullptr);
-    if (!progman) return;
-    // Check for visible WorkerW child of Progman (created by 0x052C)
-    HWND ww = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
-    if (ww && IsWindowVisible(ww)) {
-        ShowWindow(ww, SW_HIDE);
-        // Re-apply wallpaper
+// Clean up stale mirror from a previous crash/force-kill
+static void cleanupStaleMirror() {
+    // Find any leftover WallpaperMirror window
+    HWND stale = FindWindowW(L"WallpaperMirror", nullptr);
+    if (stale) {
+        DestroyWindow(stale);
+        // Re-apply wallpaper to reset CLR_NONE
         wchar_t wp[MAX_PATH] = {};
         SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wp, 0);
         SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wp, SPIF_SENDCHANGE);
     }
-}
-
-// Mirror window proc — just paints what we copy into it
-static LRESULT CALLBACK MirrorProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    return DefWindowProcW(h, m, w, l);
+    // Also hide any stale WorkerW child of Progman from previous 0x052C
+    HWND progman = FindWindowW(L"Progman", nullptr);
+    if (progman) {
+        HWND ww = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+        if (ww && IsWindowVisible(ww)) {
+            ShowWindow(ww, SW_HIDE);
+            wchar_t wp[MAX_PATH] = {};
+            SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wp, 0);
+            SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wp, SPIF_SENDCHANGE);
+        }
+    }
 }
 
 static void embedAsWallpaper() {
@@ -266,67 +269,57 @@ static void embedAsWallpaper() {
     int cx = GetSystemMetrics(SM_CXSCREEN);
     int cy = GetSystemMetrics(SM_CYSCREEN);
 
-    // 1) Send 0x052C to Progman — this spawns a WorkerW behind SHELLDLL_DefView
+    // 1) Send 0x052C to Progman — spawns WorkerW for wallpaper layer
     SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
 
-    // 2) Find the WorkerW that does NOT contain SHELLDLL_DefView
-    //    (the one behind SHELLDLL_DefView, used for wallpaper rendering)
+    // 2) Find the correct WorkerW to host our content
+    //    On Win11: WorkerW is a child of Progman
+    //    On Win10: WorkerW is a separate top-level window
     g_workerW = nullptr;
-    HWND w2 = nullptr;
-    while ((w2 = FindWindowExW(nullptr, w2, L"WorkerW", nullptr)) != nullptr) {
-        if (FindWindowExW(w2, nullptr, L"SHELLDLL_DefView", nullptr))
-            continue; // skip — this one has the desktop icons
-        g_workerW = w2;
-        break;
-    }
-
-    // If WorkerW not found as top-level, check as Progman child
-    if (!g_workerW) {
-        HWND child = nullptr;
-        while ((child = FindWindowExW(progman, child, L"WorkerW", nullptr)) != nullptr) {
+    HWND child = nullptr;
+    while ((child = FindWindowExW(progman, child, L"WorkerW", nullptr)) != nullptr) {
+        RECT r; GetWindowRect(child, &r);
+        if ((r.right - r.left) >= cx && (r.bottom - r.top) >= cy) {
             g_workerW = child;
             break;
         }
     }
-
+    if (!g_workerW) {
+        // Fallback: search top-level WorkerW
+        HWND w2 = nullptr;
+        while ((w2 = FindWindowExW(nullptr, w2, L"WorkerW", nullptr)) != nullptr) {
+            if (FindWindowExW(w2, nullptr, L"SHELLDLL_DefView", nullptr))
+                continue;
+            RECT r; GetWindowRect(w2, &r);
+            if ((r.right - r.left) >= cx && (r.bottom - r.top) >= cy) {
+                g_workerW = w2;
+                break;
+            }
+        }
+    }
     if (!g_workerW) return;
 
-    // 3) Create mirror window as child of WorkerW
-    WNDCLASSW mc = {};
-    mc.lpfnWndProc = MirrorProc;
-    mc.hInstance = GetModuleHandleW(nullptr);
-    mc.lpszClassName = L"WallpaperMirror";
-    mc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    RegisterClassW(&mc);
+    // 3) Reparent WebView2 directly into WorkerW using the proper API
+    if (g_ctrl) {
+        g_ctrl->put_ParentWindow(g_workerW);
+        RECT rc = {0, 0, cx, cy};
+        g_ctrl->put_Bounds(rc);
+    }
 
-    g_mirror = CreateWindowExW(0, L"WallpaperMirror", L"",
-        WS_CHILD | WS_VISIBLE, 0, 0, cx, cy, g_workerW,
-        nullptr, mc.hInstance, nullptr);
-
-    // 4) Hide WebView2 window from taskbar, keep at 0,0 but behind everything
+    // 4) Hide the original window from taskbar
     LONG exStyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
     exStyle = (exStyle | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW;
     SetWindowLongW(g_hwnd, GWL_EXSTYLE, exStyle);
-    // Position at 0,0 fullscreen but at HWND_BOTTOM — behind WorkerW & Progman
-    SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, cx, cy,
-        SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-    // 5) Start timer to copy WebView2 content to mirror (~30fps)
-    SetTimer(g_hwnd, 1, 33, nullptr);
+    ShowWindow(g_hwnd, SW_HIDE);
 }
 
 static void restoreDesktop() {
-    KillTimer(g_hwnd, 1);
-    if (g_mirror && IsWindow(g_mirror)) {
-        DestroyWindow(g_mirror);
-        g_mirror = nullptr;
+    // Reparent WebView2 back to g_hwnd before cleanup
+    if (g_ctrl && g_hwnd && IsWindow(g_hwnd)) {
+        g_ctrl->put_ParentWindow(g_hwnd);
     }
-    // Hide the WorkerW so desktop icons are not covered
-    if (g_workerW && IsWindow(g_workerW)) {
-        ShowWindow(g_workerW, SW_HIDE);
-        g_workerW = nullptr;
-    }
-    // Force Windows to re-apply the wallpaper (removes black background)
+    g_workerW = nullptr;
+    // Force Windows to re-apply the wallpaper
     wchar_t wallpaper[MAX_PATH] = {};
     SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaper, 0);
     SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper, SPIF_SENDCHANGE);
@@ -775,27 +768,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         return 0;
 
-    case WM_TIMER:
-        if (w == 1 && g_mirror && g_hwnd) {
-            // Copy WebView2 content to mirror window via PrintWindow
-            RECT rc; GetClientRect(g_mirror, &rc);
-            int cx = rc.right, cy = rc.bottom;
-            if (cx > 0 && cy > 0) {
-                HDC mirrorDC = GetDC(g_mirror);
-                HDC memDC = CreateCompatibleDC(mirrorDC);
-                HBITMAP bmp = CreateCompatibleBitmap(mirrorDC, cx, cy);
-                HBITMAP old = (HBITMAP)SelectObject(memDC, bmp);
-                // PW_RENDERFULLCONTENT (2) captures composited/layered content
-                PrintWindow(g_hwnd, memDC, 2);
-                BitBlt(mirrorDC, 0, 0, cx, cy, memDC, 0, 0, SRCCOPY);
-                SelectObject(memDC, old);
-                DeleteObject(bmp);
-                DeleteDC(memDC);
-                ReleaseDC(g_mirror, mirrorDC);
-            }
-        }
-        return 0;
-
     case WM_KEYDOWN:
         if (w == VK_F12 && !g_devUrl.empty()) {
             if (g_view) g_view->OpenDevToolsWindow();
@@ -819,8 +791,8 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-    // Clean up stale WorkerW from previous crash
-    cleanupStaleWorkerW();
+    // Clean up stale mirror/WorkerW from previous crash
+    cleanupStaleMirror();
 
     // Parse --dev <url>
     int argc;
