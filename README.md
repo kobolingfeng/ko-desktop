@@ -1,6 +1,6 @@
 # ko-desktop — 动态桌面壁纸
 
-超轻量动态桌面壁纸应用，类似 Wallpaper Engine。基于 [QiangQiang](https://github.com/aspect-build/aspect) 框架（C++ Win32 + WebView2 + Bun + TypeScript）。
+超轻量动态桌面壁纸应用，类似 Wallpaper Engine。基于 [QiangQiang](https://github.com/kobolingfeng/qiangqiang) 框架（C++ Win32 + WebView2 + Bun + TypeScript）。
 
 > 单 exe，播放 MP4/WebM 视频替代桌面壁纸。
 

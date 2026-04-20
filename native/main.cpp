@@ -97,10 +97,8 @@ static bool            g_trayActive = false;
 
 // Wallpaper
 static HWND g_workerW = nullptr;
-static HWND g_msgWnd = nullptr;  // hidden top-level window for tray & menu
-static HWND g_listView = nullptr;
-static COLORREF g_origBkColor = 0;
-static COLORREF g_origTextBkColor = 0;
+static HWND g_mirror = nullptr;   // mirror window inside WorkerW
+static HWND g_msgWnd = nullptr;   // hidden top-level window for tray & menu
 
 // Embedded assets (single-exe mode)
 #ifdef SINGLE_EXE
@@ -241,6 +239,11 @@ static void ipc_dispatch(LPCWSTR raw) {
 //  Wallpaper embedding — place window behind desktop icons
 // ================================================================
 
+// Mirror window proc — just paints what we copy into it
+static LRESULT CALLBACK MirrorProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    return DefWindowProcW(h, m, w, l);
+}
+
 static void embedAsWallpaper() {
     HWND progman = FindWindowW(L"Progman", nullptr);
     if (!progman) return;
@@ -248,42 +251,66 @@ static void embedAsWallpaper() {
     int cx = GetSystemMetrics(SM_CXSCREEN);
     int cy = GetSystemMetrics(SM_CYSCREEN);
 
-    // Set Progman as OWNER — keeps our WS_POPUP above desktop but below normal windows
-    SetWindowLongPtrW(g_hwnd, GWLP_HWNDPARENT, (LONG_PTR)progman);
+    // 1) Send 0x052C to Progman — this spawns a WorkerW behind SHELLDLL_DefView
+    SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
 
-    // Remove from taskbar and alt-tab
-    LONG exStyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
-    exStyle = (exStyle | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW;
-    SetWindowLongW(g_hwnd, GWL_EXSTYLE, exStyle);
+    // 2) Find the WorkerW that does NOT contain SHELLDLL_DefView
+    //    (the one behind SHELLDLL_DefView, used for wallpaper rendering)
+    g_workerW = nullptr;
+    HWND w2 = nullptr;
+    while ((w2 = FindWindowExW(nullptr, w2, L"WorkerW", nullptr)) != nullptr) {
+        if (FindWindowExW(w2, nullptr, L"SHELLDLL_DefView", nullptr))
+            continue; // skip — this one has the desktop icons
+        g_workerW = w2;
+        break;
+    }
 
-    // HWND_BOTTOM + owner relationship = just above Progman, below everything else
-    SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, cx, cy,
-        SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-    // Make desktop icons background transparent so wallpaper shows through
-    HWND shell = FindWindowExW(progman, nullptr, L"SHELLDLL_DefView", nullptr);
-    if (shell) {
-        g_listView = FindWindowExW(shell, nullptr, L"SysListView32", nullptr);
-        if (g_listView) {
-            g_origBkColor = (COLORREF)SendMessageW(g_listView, LVM_GETBKCOLOR, 0, 0);
-            g_origTextBkColor = (COLORREF)SendMessageW(g_listView, LVM_GETTEXTBKCOLOR, 0, 0);
-            SendMessageW(g_listView, LVM_SETBKCOLOR, 0, (LPARAM)(COLORREF)CLR_NONE);
-            SendMessageW(g_listView, LVM_SETTEXTBKCOLOR, 0, (LPARAM)(COLORREF)CLR_NONE);
-            InvalidateRect(g_listView, nullptr, TRUE);
+    // If WorkerW not found as top-level, check as Progman child
+    if (!g_workerW) {
+        HWND child = nullptr;
+        while ((child = FindWindowExW(progman, child, L"WorkerW", nullptr)) != nullptr) {
+            g_workerW = child;
+            break;
         }
     }
 
-    g_workerW = progman;
-    SetTimer(g_hwnd, 1, 500, nullptr);
+    if (!g_workerW) return;
+
+    // 3) Create mirror window as child of WorkerW
+    WNDCLASSW mc = {};
+    mc.lpfnWndProc = MirrorProc;
+    mc.hInstance = GetModuleHandleW(nullptr);
+    mc.lpszClassName = L"WallpaperMirror";
+    mc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    RegisterClassW(&mc);
+
+    g_mirror = CreateWindowExW(0, L"WallpaperMirror", L"",
+        WS_CHILD | WS_VISIBLE, 0, 0, cx, cy, g_workerW,
+        nullptr, mc.hInstance, nullptr);
+
+    // 4) Hide WebView2 window from taskbar, keep at 0,0 but behind everything
+    LONG exStyle = GetWindowLongW(g_hwnd, GWL_EXSTYLE);
+    exStyle = (exStyle | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW;
+    SetWindowLongW(g_hwnd, GWL_EXSTYLE, exStyle);
+    // Position at 0,0 fullscreen but at HWND_BOTTOM — behind WorkerW & Progman
+    SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, cx, cy,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    // 5) Start timer to copy WebView2 content to mirror (~30fps)
+    SetTimer(g_hwnd, 1, 33, nullptr);
 }
 
 static void restoreDesktop() {
-    if (g_listView && IsWindow(g_listView)) {
-        SendMessageW(g_listView, LVM_SETBKCOLOR, 0, (LPARAM)g_origBkColor);
-        SendMessageW(g_listView, LVM_SETTEXTBKCOLOR, 0, (LPARAM)g_origTextBkColor);
-        InvalidateRect(g_listView, nullptr, TRUE);
-    }
     KillTimer(g_hwnd, 1);
+    if (g_mirror && IsWindow(g_mirror)) {
+        DestroyWindow(g_mirror);
+        g_mirror = nullptr;
+    }
+    // Hide the WorkerW so desktop icons are not covered
+    if (g_workerW && IsWindow(g_workerW)) {
+        ShowWindow(g_workerW, SW_HIDE);
+        g_workerW = nullptr;
+    }
 }
 
 // ================================================================
@@ -730,23 +757,25 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
 
     case WM_TIMER:
-        if (w == 1 && g_workerW) {
-            // Re-show if hidden by Win+D / MinimizeAll
-            if (!IsWindowVisible(g_hwnd)) {
-                ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+        if (w == 1 && g_mirror && g_hwnd) {
+            // Copy WebView2 content to mirror window via PrintWindow
+            RECT rc; GetClientRect(g_mirror, &rc);
+            int cx = rc.right, cy = rc.bottom;
+            if (cx > 0 && cy > 0) {
+                HDC mirrorDC = GetDC(g_mirror);
+                HDC memDC = CreateCompatibleDC(mirrorDC);
+                HBITMAP bmp = CreateCompatibleBitmap(mirrorDC, cx, cy);
+                HBITMAP old = (HBITMAP)SelectObject(memDC, bmp);
+                // PW_RENDERFULLCONTENT (2) captures composited/layered content
+                PrintWindow(g_hwnd, memDC, 2);
+                BitBlt(mirrorDC, 0, 0, cx, cy, memDC, 0, 0, SRCCOPY);
+                SelectObject(memDC, old);
+                DeleteObject(bmp);
+                DeleteDC(memDC);
+                ReleaseDC(g_mirror, mirrorDC);
             }
-            // Keep at bottom (owner keeps us above Progman)
-            SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
         return 0;
-
-    case WM_WINDOWPOSCHANGING:
-        if (g_workerW && g_devUrl.empty()) {
-            auto* pos = (WINDOWPOS*)l;
-            pos->flags &= ~SWP_HIDEWINDOW;
-        }
-        break;
 
     case WM_KEYDOWN:
         if (w == VK_F12 && !g_devUrl.empty()) {
