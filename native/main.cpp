@@ -36,7 +36,11 @@
 #include <unordered_map>
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <algorithm>
 #include <windowsx.h>
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -98,6 +102,17 @@ static bool            g_trayActive = false;
 // Wallpaper
 static HWND g_workerW = nullptr;
 static HWND g_msgWnd = nullptr;   // hidden top-level window for tray & menu
+
+// Panel (control panel window with its own WebView2)
+static HWND                             g_panelHwnd = nullptr;
+static ComPtr<ICoreWebView2Controller>  g_panelCtrl;
+static ComPtr<ICoreWebView2>            g_panelView;
+
+// Wallpaper state (shared between wallpaper + panel WebView2)
+static json g_wpState = {
+    {"speed", 1.0}, {"volume", 1.0}, {"muted", true},
+    {"paused", false}, {"videoPath", ""}
+};
 
 // Embedded assets (single-exe mode)
 #ifdef SINGLE_EXE
@@ -217,7 +232,13 @@ static void ipc_emit(const std::string& ev, const json& data = {}) {
     g_view->PostWebMessageAsJson(U2W(m.dump()).c_str());
 }
 
-static void ipc_dispatch(LPCWSTR raw) {
+static void ipc_emit_panel(const std::string& ev, const json& data = {}) {
+    if (!g_panelView) return;
+    json m = {{"event", ev}, {"data", data}};
+    g_panelView->PostWebMessageAsJson(U2W(m.dump()).c_str());
+}
+
+static void ipc_dispatch(ICoreWebView2* respondTo, LPCWSTR raw) {
     try {
         auto req = json::parse(W2U(raw));
         json resp;
@@ -230,7 +251,7 @@ static void ipc_dispatch(LPCWSTR raw) {
         } else {
             resp["error"] = "unknown: " + cmd;
         }
-        g_view->PostWebMessageAsJson(U2W(resp.dump()).c_str());
+        respondTo->PostWebMessageAsJson(U2W(resp.dump()).c_str());
     } catch (...) {}
 }
 
@@ -323,6 +344,332 @@ static void restoreDesktop() {
     wchar_t wallpaper[MAX_PATH] = {};
     SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaper, 0);
     SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper, SPIF_SENDCHANGE);
+}
+
+// ================================================================
+//  Panel — control panel window with second WebView2
+// ================================================================
+
+static bool g_panelVisible = false;
+
+static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_SIZE:
+        if (g_panelCtrl) {
+            RECT b; GetClientRect(h, &b);
+            g_panelCtrl->put_Bounds(b);
+        }
+        return 0;
+    case WM_CLOSE:
+        ShowWindow(h, SW_HIDE);
+        g_panelVisible = false;
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+static void showPanel();
+static void hidePanel();
+
+static void setupPanelWebView(ICoreWebView2Controller* ctrl) {
+    g_panelCtrl = ctrl;
+    ctrl->get_CoreWebView2(&g_panelView);
+
+    ComPtr<ICoreWebView2Settings> settings;
+    g_panelView->get_Settings(&settings);
+    if (settings) {
+        settings->put_AreDefaultContextMenusEnabled(FALSE);
+        settings->put_IsStatusBarEnabled(FALSE);
+        settings->put_IsZoomControlEnabled(FALSE);
+        settings->put_AreDevToolsEnabled(!g_devUrl.empty() ? TRUE : FALSE);
+        settings->put_IsScriptEnabled(TRUE);
+        settings->put_IsWebMessageEnabled(TRUE);
+    }
+
+    ComPtr<ICoreWebView2Controller2> ctrl2;
+    if (SUCCEEDED(g_panelCtrl.As(&ctrl2))) {
+        ctrl2->put_DefaultBackgroundColor({255, 240, 237, 230}); // #f0ede6 light bg
+    }
+
+    // Virtual host mapping for panel
+    ComPtr<ICoreWebView2_3> v3;
+    if (SUCCEEDED(g_panelView.As(&v3))) {
+        auto base = exe_dir();
+        v3->SetVirtualHostNameToFolderMapping(
+            L"app.localhost", base.c_str(),
+            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+    }
+
+    // IPC handler for panel
+    g_panelView->add_WebMessageReceived(
+        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+        [](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* a) -> HRESULT {
+            LPWSTR m; a->get_WebMessageAsJson(&m);
+            ipc_dispatch(sender, m);
+            CoTaskMemFree(m);
+            return S_OK;
+        }).Get(), nullptr);
+
+    RECT rc; GetClientRect(g_panelHwnd, &rc);
+    g_panelCtrl->put_Bounds(rc);
+    g_panelCtrl->put_IsVisible(TRUE);
+
+    if (!g_devUrl.empty()) {
+        auto panelUrl = g_devUrl + std::wstring(L"/panel.html");
+        g_panelView->Navigate(panelUrl.c_str());
+    } else {
+        g_panelView->Navigate(L"https://app.localhost/panel.html");
+    }
+}
+
+static const int PANEL_W = 720;
+
+static void createPanelWindow(HINSTANCE hi) {
+    WNDCLASSEXW pc{sizeof(pc)};
+    pc.lpfnWndProc   = PanelWndProc;
+    pc.hInstance      = hi;
+    pc.lpszClassName  = L"KoDesktop_Panel";
+    pc.hCursor        = LoadCursorW(nullptr, IDC_ARROW);
+    pc.hbrBackground  = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    pc.hIcon          = LoadIconW(hi, MAKEINTRESOURCE(IDI_APP));
+    pc.hIconSm        = (HICON)LoadImageW(hi, MAKEINTRESOURCE(IDI_APP),
+        IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+    if (!pc.hIcon) { pc.hIcon = LoadIconW(nullptr, IDI_APPLICATION); pc.hIconSm = pc.hIcon; }
+    RegisterClassExW(&pc);
+
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    int panelH = min(780, screenH * 85 / 100);
+    int sx = (GetSystemMetrics(SM_CXSCREEN) - PANEL_W) / 2;
+    int sy = (screenH - panelH) / 2;
+
+    g_panelHwnd = CreateWindowExW(
+        0,
+        L"KoDesktop_Panel", L"动态壁纸",
+        WS_POPUP | WS_CLIPCHILDREN,
+        sx, sy, PANEL_W, panelH,
+        nullptr, nullptr, hi, nullptr);
+
+    // Win11 rounded corners + shadow
+    if (g_panelHwnd) {
+        // DWMWCP_ROUND = 2
+        DWORD pref = 2;
+        DwmSetWindowAttribute(g_panelHwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
+            &pref, sizeof(pref));
+        // Enable shadow for WS_POPUP via MARGINS
+        MARGINS m = {1,1,1,1};
+        DwmExtendFrameIntoClientArea(g_panelHwnd, &m);
+    }
+}
+
+static void initPanelWebView() {
+    if (!g_env || !g_panelHwnd || g_panelView) return;
+    g_env->CreateCoreWebView2Controller(g_panelHwnd,
+        Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+        [](HRESULT hr, ICoreWebView2Controller* ctrl) -> HRESULT {
+            if (FAILED(hr) || !ctrl) return hr;
+            setupPanelWebView(ctrl);
+            return S_OK;
+        }).Get());
+}
+
+static void showPanel() {
+    if (!g_panelHwnd) return;
+    if (g_panelVisible) { SetForegroundWindow(g_panelHwnd); return; }
+    ShowWindow(g_panelHwnd, SW_SHOW);
+    SetForegroundWindow(g_panelHwnd);
+    g_panelVisible = true;
+    ipc_emit_panel("wallpaper.stateChanged", g_wpState);
+}
+
+static void hidePanel() {
+    if (!g_panelHwnd || !g_panelVisible) return;
+    ShowWindow(g_panelHwnd, SW_HIDE);
+    g_panelVisible = false;
+}
+
+// ── Wallpaper control IPC (used by panel) ──────
+
+static json show_open_file_dialog(const json&); // forward decl
+
+static void reg_wallpaper_ctrl() {
+    ipc_on("wallpaper.setState", [](const json& a) -> json {
+        g_wpState = a;
+        return true;
+    });
+
+    ipc_on("wallpaper.getState", [](const json&) -> json {
+        return g_wpState;
+    });
+
+    ipc_on("wallpaper.play", [](const json&) -> json {
+        ipc_emit("wallpaper.play");
+        g_wpState["paused"] = false;
+        return true;
+    });
+
+    ipc_on("wallpaper.pause", [](const json&) -> json {
+        ipc_emit("wallpaper.pause");
+        g_wpState["paused"] = true;
+        return true;
+    });
+
+    ipc_on("wallpaper.restart", [](const json&) -> json {
+        ipc_emit("wallpaper.restart");
+        return true;
+    });
+
+    ipc_on("wallpaper.setSpeed", [](const json& a) -> json {
+        double rate = a.value("rate", 1.0);
+        g_wpState["speed"] = rate;
+        ipc_emit("wallpaper.setSpeed", {{"rate", rate}});
+        return true;
+    });
+
+    ipc_on("wallpaper.setVolume", [](const json& a) -> json {
+        double vol = a.value("volume", 1.0);
+        g_wpState["volume"] = vol;
+        ipc_emit("wallpaper.setVolume", {{"volume", vol}});
+        return true;
+    });
+
+    ipc_on("wallpaper.setMuted", [](const json& a) -> json {
+        bool muted = a.value("muted", true);
+        g_wpState["muted"] = muted;
+        ipc_emit("wallpaper.setMuted", {{"muted", muted}});
+        return true;
+    });
+
+    ipc_on("wallpaper.pickVideo", [](const json&) -> json {
+        ipc_emit("wallpaper.pickVideo");
+        return true;
+    });
+
+    ipc_on("wallpaper.setVideo", [](const json& a) -> json {
+        auto filePath = a.value("path", std::string{});
+        if (filePath.empty()) return false;
+        auto wPath  = U2W(filePath);
+        auto parent = fspath::path(wPath).parent_path().wstring();
+        ComPtr<ICoreWebView2_3> v3;
+        if (SUCCEEDED(g_view.As(&v3))) {
+            v3->SetVirtualHostNameToFolderMapping(
+                L"media.localhost", parent.c_str(),
+                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+        }
+        auto filename = fspath::path(wPath).filename().string();
+        ipc_emit("wallpaper.setVideo", {{"path", filePath}, {"filename", filename}});
+        return true;
+    });
+
+    // ── Library management ──────────
+    ipc_on("library.load", [](const json&) -> json {
+        auto path = app_data_dir() + L"\\library.json";
+        std::ifstream f(path);
+        if (!f) return json::array();
+        try { json j; f >> j; return j; } catch (...) { return json::array(); }
+    });
+
+    ipc_on("library.save", [](const json& a) -> json {
+        auto path = app_data_dir() + L"\\library.json";
+        std::ofstream f(path, std::ios::binary);
+        if (!f) throw std::runtime_error("Cannot write library.json");
+        f << a.value("entries", json::array()).dump(2);
+        return true;
+    });
+
+    ipc_on("library.addFiles", [](const json&) -> json {
+        json dlgArgs = {
+            {"multiple", true},
+            {"filters", json::array({
+                {{"name", "\u89C6\u9891\u6587\u4EF6"}, {"extensions", {"mp4","webm","ogg","mkv","avi","mov","wmv","flv"}}},
+                {{"name", "\u6240\u6709\u6587\u4EF6"}, {"extensions", {"*"}}}
+            })}
+        };
+        auto result = show_open_file_dialog(dlgArgs);
+        if (result.is_null()) return json::array();
+        json arr = json::array();
+        auto paths = result.is_array() ? result : json::array({result});
+        for (auto& p : paths) {
+            auto wPath = U2W(p.get<std::string>());
+            auto sz = fspath::exists(wPath) ? (int64_t)fspath::file_size(wPath) : 0;
+            arr.push_back({
+                {"path", p},
+                {"name", fspath::path(wPath).filename().string()},
+                {"size", sz}
+            });
+        }
+        return arr;
+    });
+
+    ipc_on("library.addFolder", [](const json&) -> json {
+        ComPtr<IFileDialog> dlg;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&dlg))))
+            return json::array();
+        FILEOPENDIALOGOPTIONS opts;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_PICKFOLDERS);
+        if (FAILED(dlg->Show(nullptr))) return json::array();
+        ComPtr<IShellItem> item;
+        dlg->GetResult(&item);
+        LPWSTR folderW; item->GetDisplayName(SIGDN_FILESYSPATH, &folderW);
+        std::wstring folder(folderW); CoTaskMemFree(folderW);
+
+        static const std::set<std::wstring> exts = {
+            L".mp4",L".webm",L".ogg",L".mkv",L".avi",L".mov",L".wmv",L".flv"
+        };
+        json arr = json::array();
+        std::error_code ec;
+        for (auto& entry : fspath::recursive_directory_iterator(folder, ec)) {
+            if (!entry.is_regular_file()) continue;
+            auto ext = entry.path().extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+            if (exts.count(ext)) {
+                arr.push_back({
+                    {"path", entry.path().string()},
+                    {"name", entry.path().filename().string()},
+                    {"size", (int64_t)entry.file_size()}
+                });
+            }
+        }
+        return arr;
+    });
+
+    ipc_on("library.mapForPanel", [](const json& a) -> json {
+        auto filePath = a.value("path", std::string{});
+        if (filePath.empty()) return nullptr;
+        auto wPath  = U2W(filePath);
+        auto parent = fspath::path(wPath).parent_path().wstring();
+        ComPtr<ICoreWebView2_3> v3;
+        if (SUCCEEDED(g_panelView.As(&v3))) {
+            v3->SetVirtualHostNameToFolderMapping(
+                L"video.localhost", parent.c_str(),
+                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+        }
+        return fspath::path(wPath).filename().string();
+    });
+
+    ipc_on("panel.moveBy", [](const json& a) -> json {
+        if (!g_panelHwnd) return false;
+        int dx = a.value("x", 0), dy = a.value("y", 0);
+        RECT r; GetWindowRect(g_panelHwnd, &r);
+        SetWindowPos(g_panelHwnd, nullptr, r.left + dx, r.top + dy, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        return true;
+    });
+
+    ipc_on("panel.show", [](const json&) -> json {
+        showPanel();
+        return true;
+    });
+
+    ipc_on("panel.hide", [](const json&) -> json {
+        hidePanel();
+        return true;
+    });
+
+    ipc_on("panel.toggle", [](const json&) -> json {
+        g_panelVisible ? hidePanel() : showPanel();
+        return true;
+    });
 }
 
 // ================================================================
@@ -450,8 +797,11 @@ static void reg_tray() {
         g_nid.uID              = 1;
         g_nid.uFlags           = NIF_ICON | NIF_TIP | NIF_MESSAGE;
         g_nid.uCallbackMessage = WM_TRAYICON;
-        // Try custom icon, fallback to default
-        g_nid.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDI_APP));
+        // Try custom icon at tray size, fallback to default
+        int smCx = GetSystemMetrics(SM_CXSMICON);
+        int smCy = GetSystemMetrics(SM_CYSMICON);
+        g_nid.hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr),
+            MAKEINTRESOURCE(IDI_APP), IMAGE_ICON, smCx, smCy, LR_DEFAULTCOLOR);
         if (!g_nid.hIcon) g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
         auto tip = U2W(a.value("tooltip", std::string{"App"}));
         wcsncpy_s(g_nid.szTip, tip.c_str(), _TRUNCATE);
@@ -590,9 +940,9 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
     // IPC handler
     g_view->add_WebMessageReceived(
         Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-        [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* a) -> HRESULT {
+        [](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* a) -> HRESULT {
             LPWSTR m; a->get_WebMessageAsJson(&m);
-            ipc_dispatch(m);
+            ipc_dispatch(sender, m);
             CoTaskMemFree(m);
             return S_OK;
         }).Get(), nullptr);
@@ -721,6 +1071,7 @@ static void init_webview() {
                 [](HRESULT hr, ICoreWebView2Controller* ctrl) -> HRESULT {
                     if (FAILED(hr)) { PostQuitMessage(1); return hr; }
                     setupWebView(ctrl);
+                    initPanelWebView();
                     return S_OK;
                 }).Get());
         }).Get());
@@ -734,13 +1085,23 @@ static LRESULT CALLBACK MsgWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_TRAYICON:
         switch (LOWORD(l)) {
-        case WM_LBUTTONUP:    ipc_emit("tray.click"); break;
-        case WM_LBUTTONDBLCLK:ipc_emit("tray.doubleClick"); break;
+        case WM_LBUTTONUP:
+            g_panelVisible ? hidePanel() : showPanel();
+            ipc_emit("tray.click");
+            break;
+        case WM_LBUTTONDBLCLK:
+            if (!g_panelVisible) showPanel();
+            ipc_emit("tray.doubleClick");
+            break;
         case WM_RBUTTONUP:    ipc_emit("tray.rightClick"); break;
         }
         return 0;
     case WM_HOTKEY:
-        ipc_emit("hotkey.triggered", {{"id", (int)w}});
+        if ((int)w == 42) {
+            g_panelVisible ? hidePanel() : showPanel();
+        } else {
+            ipc_emit("hotkey.triggered", {{"id", (int)w}});
+        }
         return 0;
     case WM_DISPLAYCHANGE:
         // Screen resolution changed — resize wallpaper to match
@@ -776,6 +1137,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         break;
 
     case WM_DESTROY:
+        if (g_panelHwnd) DestroyWindow(g_panelHwnd);
         restoreDesktop();
         PostQuitMessage(0);
         return 0;
@@ -859,6 +1221,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
         // stays hidden — no ShowWindow call
     }
 
+    // Register global hotkey for panel toggle (Ctrl+Shift+P)
+    RegisterHotKey(g_msgWnd, 42, MOD_CONTROL | MOD_SHIFT, 'P');
+
     // In dev mode use a normal window for debugging
     if (!g_devUrl.empty()) {
         SetWindowLongW(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN);
@@ -879,9 +1244,13 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
     reg_hotkey();
     reg_devtools();
     reg_media();
+    reg_wallpaper_ctrl();
 
     ShowWindow(g_hwnd, SW_SHOW);
     UpdateWindow(g_hwnd);
+
+    // Create panel window (hidden until user opens it; WebView2 created after env ready)
+    createPanelWindow(hi);
 
     init_webview();
 

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>系统终端</title>
+<style>
+:root{
+    --bg:#f0ede6;
+    --surface:#fff;
+    --surface-h:#f8f6f2;
+    --border:#d5d0c7;
+    --border-h:#b0a898;
+    --accent:#2d7a6f;
+    --accent-light:#e6f2f0;
+    --accent-h:#1f5b53;
+    --glow:rgba(45,122,111,.12);
+    --txt:#2c2c2c;
+    --txt2:#8a8578;
+    --green:#2d8a4e;
+    --amber:#c47f17;
+    --red:#c0392b;
+    --red-bg:rgba(192,57,43,.08);
+    --track:#ddd8d0;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+    font-family:'Segoe UI Variable','Segoe UI',-apple-system,sans-serif;
+    background:var(--bg);color:var(--txt);
+    height:100vh;overflow:hidden;user-select:none;
+    display:flex;flex-direction:column;
+}
+
+/* titlebar */
+.bar{
+    display:flex;align-items:center;gap:10px;
+    padding:10px 16px;flex-shrink:0;cursor:default;
+    border-bottom:1px solid var(--border);
+    background:var(--surface);
+}
+.bar-sym{width:16px;height:16px;border-radius:50%;border:2px solid var(--accent);position:relative;flex-shrink:0}
+.bar-sym::after{content:'';position:absolute;left:50%;top:2px;bottom:2px;width:2px;background:var(--accent);transform:translateX(-50%)}
+.bar h1{flex:1;font-size:14px;font-weight:600;letter-spacing:1px;color:var(--accent)}
+.bar-btn{
+    cursor:pointer;
+    width:28px;height:28px;border:1px solid var(--border);border-radius:6px;
+    background:transparent;color:var(--txt2);
+    display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.bar-btn:hover{border-color:var(--border-h);color:var(--txt);background:var(--surface-h)}
+.bar-btn.x:hover{border-color:var(--red);color:var(--red);background:var(--red-bg)}
+.bar-btn svg{width:14px;height:14px}
+
+/* main split */
+.main{flex:1;display:flex;overflow:hidden}
+.col-l{width:290px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;border-right:1px solid var(--border);padding:14px;background:var(--surface)}
+.col-r{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px;background:var(--bg)}
+.col-l::-webkit-scrollbar,.lib::-webkit-scrollbar{width:4px}
+.col-l::-webkit-scrollbar-thumb,.lib::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* section */
+.sec{margin-bottom:16px}
+.sec-t{font-size:12px;font-weight:600;letter-spacing:.5px;color:var(--accent);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.sec-t::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* now playing */
+.np{display:flex;gap:12px;align-items:center}
+.np-thumb{
+    width:88px;height:50px;border-radius:6px;overflow:hidden;flex-shrink:0;
+    border:1px solid var(--border);background:#e8e4dc;
+    display:flex;align-items:center;justify-content:center;
+}
+.np-thumb img{width:100%;height:100%;object-fit:cover}
+.np-thumb svg{width:22px;height:22px;color:var(--txt2)}
+.np-body{flex:1;min-width:0}
+.np-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np-stat{font-size:12px;color:var(--txt2);margin-top:4px;display:flex;align-items:center;gap:6px}
+.ind{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ind.on{background:var(--green);box-shadow:0 0 4px rgba(45,138,78,.4)}
+.ind.off{background:var(--amber);box-shadow:0 0 4px rgba(196,127,23,.3)}
+.ind.none{background:var(--txt2)}
+
+/* transport */
+.tr{display:flex;align-items:center;justify-content:center;gap:14px;padding:6px 0}
+.tb{
+    width:36px;height:36px;border:1px solid var(--border);border-radius:8px;
+    background:var(--surface);color:var(--txt2);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.tb:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.tb:active{transform:scale(.93)}
+.tb svg{width:16px;height:16px}
+.tb.pri{width:42px;height:42px;border-color:var(--accent);color:#fff;background:var(--accent);box-shadow:0 2px 8px var(--glow)}
+.tb.pri:hover{background:var(--accent-h)}
+.tb.pri svg{width:18px;height:18px}
+
+/* slider */
+.srow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.srow .lbl{font-size:12px;color:var(--txt2);width:48px;flex-shrink:0}
+.srow .val{font-size:13px;font-weight:600;color:var(--accent);min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{
+    flex:1;-webkit-appearance:none;appearance:none;
+    height:4px;border-radius:2px;background:var(--track);outline:none;cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;
+    width:14px;height:14px;border-radius:50%;
+    background:var(--accent);border:2px solid #fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.2);
+    transition:transform .1s;
+}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
+
+/* toggle */
+.trow{display:flex;align-items:center;gap:10px;margin-top:6px}
+.tgl{
+    width:38px;height:20px;border-radius:10px;padding:0;
+    background:var(--track);cursor:pointer;border:none;
+    position:relative;transition:background .2s;
+}
+.tgl.on{background:var(--accent)}
+.tgl::after{
+    content:'';position:absolute;top:2px;left:2px;
+    width:16px;height:16px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);
+    transition:transform .2s;
+}
+.tgl.on::after{transform:translateX(18px)}
+.tgl-lbl{font-size:12px;color:var(--txt2)}
+
+/* exit btn */
+.exit-btn{
+    margin-top:auto;padding-top:10px;
+    height:34px;border:1px solid rgba(192,57,43,.2);border-radius:8px;
+    background:transparent;color:var(--red);font-family:inherit;
+    font-size:13px;font-weight:500;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:8px;transition:all .15s;
+}
+.exit-btn:hover{background:var(--red-bg);border-color:var(--red)}
+.exit-btn svg{width:14px;height:14px}
+
+/* right col header */
+.rh{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-shrink:0}
+.rh .sec-t{margin-bottom:0;flex:1}
+.rh-btn{
+    width:30px;height:30px;border:1px solid var(--border);border-radius:6px;
+    background:var(--surface);color:var(--txt2);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.rh-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.rh-btn svg{width:14px;height:14px}
+
+/* library grid */
+.lib{flex:1;overflow-y:auto;padding-right:2px}
+.lgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.empty{text-align:center;padding:50px 0;color:var(--txt2);font-size:13px}
+.empty svg{width:36px;height:36px;opacity:.3;display:block;margin:0 auto 10px}
+
+/* video card */
+.vc{
+    border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;
+    background:var(--surface);transition:all .15s;position:relative;
+}
+.vc:hover{border-color:var(--border-h);box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.vc.act{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
+.vt{
+    width:100%;aspect-ratio:16/9;background:#e8e4dc;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;position:relative;
+}
+.vt img{width:100%;height:100%;object-fit:cover}
+.vt>svg{width:24px;height:24px;color:var(--txt2);opacity:.3}
+.vt .ov{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.35);opacity:0;transition:opacity .15s;
+}
+.vc:hover .ov{opacity:1}
+.ov svg{width:24px;height:24px;color:#fff;filter:drop-shadow(0 1px 3px rgba(0,0,0,.3))}
+.vi{padding:8px 10px}
+.vi-n{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vi-s{font-size:11px;color:var(--txt2);margin-top:2px}
+.vr{
+    position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;
+    border:none;cursor:pointer;background:rgba(0,0,0,.5);color:#fff;
+    display:none;align-items:center;justify-content:center;z-index:1;transition:all .1s;
+}
+.vc:hover .vr{display:flex}
+.vr:hover{background:var(--red)}
+.vr svg{width:10px;height:10px}
+
+/* footer */
+.foot{
+    padding:6px 16px;border-top:1px solid var(--border);background:var(--surface);
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:11px;color:var(--txt2);flex-shrink:0;
+}
+.foot .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle}
+</style>
+</head>
+<body>
+
+<!-- TITLEBAR (JS drag) -->
+<div class="bar" id="titlebar">
+    <div class="bar-sym"></div>
+    <h1>系统终端</h1>
+    <button class="bar-btn" id="btnMin" title="最小化">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <button class="bar-btn x" id="btnClose" title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+</div>
+
+<!-- TWO-COLUMN LAYOUT -->
+<div class="main">
+
+<!-- LEFT: CONTROLS -->
+<div class="col-l">
+
+    <div class="sec">
+        <div class="sec-t">正在播放</div>
+        <div class="np">
+            <div class="np-thumb" id="npThumb">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            </div>
+            <div class="np-body">
+                <div class="np-name" id="videoName">未选择视频</div>
+                <div class="np-stat"><span class="ind none" id="statusDot"></span><span id="videoStatus">就绪</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sec">
+        <div class="sec-t">播放控制</div>
+        <div class="tr">
+            <button class="tb" id="btnRestart" title="重新开始">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            </button>
+            <button class="tb pri" id="btnPlayPause" title="播放/暂停">
+                <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="7,3 20,12 7,21"/></svg>
+            </button>
+            <button class="tb" id="btnStop" title="停止">
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="sec">
+        <div class="sec-t">参数</div>
+        <div class="srow">
+            <span class="lbl">速度</span>
+            <input type="range" id="speedSlider" min="25" max="400" value="100" step="25">
+            <span class="val" id="speedValue">1.00x</span>
+        </div>
+        <div class="srow">
+            <span class="lbl">音量</span>
+            <input type="range" id="volumeSlider" min="0" max="100" value="100">
+            <span class="val" id="volumeValue">100%</span>
+        </div>
+        <div class="trow">
+            <button class="tgl" id="muteToggle"></button>
+            <span class="tgl-lbl" id="muteLabel">已静音</span>
+        </div>
+    </div>
+
+    <button class="exit-btn" id="btnExit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        退出应用
+    </button>
+</div>
+
+<!-- RIGHT: VIDEO LIBRARY -->
+<div class="col-r">
+    <div class="rh">
+        <div class="sec-t">视频库</div>
+        <button class="rh-btn" id="btnAddFiles" title="导入文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        </button>
+        <button class="rh-btn" id="btnAddFolder" title="导入文件夹">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        </button>
+    </div>
+    <div class="lib">
+        <div id="libGrid" class="lgrid"></div>
+        <div id="libEmpty" class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            数据库为空<br>请导入视频文件
+        </div>
+    </div>
+</div>
+
+</div>
+
+<!-- FOOTER -->
+<div class="foot">
+    <span>ko-desktop</span>
+    <span><span class="dot"></span>运行中</span>
+</div>
+
+<script>
+const pending = new Map();
+let nextId = 0;
+const hasWV = typeof window !== 'undefined' && 'chrome' in window && 'webview' in window.chrome;
+
+// ── Window drag via JS (WS_POPUP has no native titlebar) ──
+(function(){
+    const bar = document.getElementById('titlebar');
+    let dragging = false, dx = 0, dy = 0;
+    bar.addEventListener('mousedown', e => {
+        if (e.target.closest('button')) return;
+        dragging = true; dx = e.screenX; dy = e.screenY;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        const mx = e.screenX - dx, my = e.screenY - dy;
+        dx = e.screenX; dy = e.screenY;
+        if (hasWV) window.chrome.webview.postMessage({ id: -999, cmd: 'panel.moveBy', args: { x: mx, y: my } });
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+function invoke(cmd, args = {}) {
+    return new Promise((resolve, reject) => {
+        if (!hasWV) { reject(new Error('No WebView2')); return; }
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        window.chrome.webview.postMessage({ id, cmd, args });
+    });
+}
+
+if (hasWV) {
+    window.chrome.webview.addEventListener('message', e => {
+        const msg = e.data;
+        if (msg && typeof msg.id === 'number') {
+            const p = pending.get(msg.id);
+            if (p) { pending.delete(msg.id); 'error' in msg ? p.reject(new Error(msg.error)) : p.resolve(msg.result); }
+        }
+        if (msg && typeof msg.event === 'string') {
+            window.dispatchEvent(new CustomEvent('ipc:' + msg.event, { detail: msg.data }));
+        }
+    });
+}
+
+let state = { speed: 1, volume: 1, muted: true, paused: false, videoPath: '' };
+
+const I_PLAY  = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="7,3 20,12 7,21"/></svg>';
+const I_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>';
+const I_FILM  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>';
+const I_PLAY_O = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 19,12 8,19"/></svg>';
+const I_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+async function refreshState() {
+    try { state = await invoke('wallpaper.getState'); updateUI(); } catch {}
+}
+
+function updateUI() {
+    const name = state.videoPath ? state.videoPath.split(/[\\/]/).pop() : '';
+    document.getElementById('videoName').textContent = name || '未选择视频';
+    document.getElementById('videoStatus').textContent = !name ? '就绪' : state.paused ? '已暂停' : '播放中';
+
+    const dot = document.getElementById('statusDot');
+    dot.className = 'ind ' + (!name ? 'none' : state.paused ? 'off' : 'on');
+
+    document.getElementById('btnPlayPause').innerHTML = state.paused ? I_PLAY : I_PAUSE;
+
+    document.getElementById('speedSlider').value = Math.round(state.speed * 100);
+    document.getElementById('speedValue').textContent = state.speed.toFixed(2) + 'x';
+    document.getElementById('volumeSlider').value = Math.round(state.volume * 100);
+    document.getElementById('volumeValue').textContent = Math.round(state.volume * 100) + '%';
+
+    const mt = document.getElementById('muteToggle');
+    mt.classList.toggle('on', state.muted);
+    document.getElementById('muteLabel').textContent = state.muted ? '已静音' : '静音';
+
+    updateNpThumb();
+    if (library.length) renderLibrary();
+}
+
+function updateNpThumb() {
+    const el = document.getElementById('npThumb');
+    if (!state.videoPath) { el.innerHTML = I_FILM; return; }
+    const entry = library.find(v => v.path === state.videoPath);
+    if (entry && entry.thumb) {
+        el.innerHTML = '<img src="' + entry.thumb + '">';
+    } else {
+        el.innerHTML = I_FILM;
+    }
+}
+
+document.getElementById('btnClose').onclick = () => invoke('panel.hide');
+document.getElementById('btnMin').onclick = () => invoke('panel.hide');
+document.getElementById('btnPlayPause').onclick = async () => {
+    state.paused = !state.paused;
+    await invoke(state.paused ? 'wallpaper.pause' : 'wallpaper.play'); updateUI();
+};
+document.getElementById('btnRestart').onclick = async () => {
+    await invoke('wallpaper.restart'); state.paused = false; updateUI();
+};
+document.getElementById('btnStop').onclick = async () => {
+    await invoke('wallpaper.pause'); await invoke('wallpaper.restart');
+    state.paused = true; updateUI();
+};
+document.getElementById('speedSlider').oninput = async function() {
+    state.speed = this.value / 100;
+    document.getElementById('speedValue').textContent = state.speed.toFixed(2) + 'x';
+    await invoke('wallpaper.setSpeed', { rate: state.speed });
+};
+document.getElementById('volumeSlider').oninput = async function() {
+    state.volume = this.value / 100;
+    document.getElementById('volumeValue').textContent = Math.round(state.volume * 100) + '%';
+    await invoke('wallpaper.setVolume', { volume: state.volume });
+};
+document.getElementById('muteToggle').onclick = async () => {
+    state.muted = !state.muted;
+    await invoke('wallpaper.setMuted', { muted: state.muted }); updateUI();
+};
+document.getElementById('btnExit').onclick = () => invoke('app.exit');
+
+window.addEventListener('ipc:wallpaper.stateChanged', e => {
+    Object.assign(state, e.detail); updateUI();
+});
+
+// ── Library ─────────────────
+let library = [];
+
+function fmtSize(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+}
+
+async function loadLibrary() {
+    try { library = await invoke('library.load'); } catch { library = []; }
+    renderLibrary();
+    genThumbnails();
+}
+
+async function saveLibrary() {
+    try { await invoke('library.save', { entries: library }); } catch {}
+}
+
+function renderLibrary() {
+    const grid = document.getElementById('libGrid');
+    const empty = document.getElementById('libEmpty');
+    empty.style.display = library.length ? 'none' : 'block';
+    grid.innerHTML = '';
+    library.forEach((v, i) => {
+        const isAct = state.videoPath && state.videoPath === v.path;
+        const c = document.createElement('div');
+        c.className = 'vc' + (isAct ? ' act' : '');
+        c.innerHTML = `<button class="vr">${I_X}</button>
+            <div class="vt">${v.thumb ? '<img src="'+v.thumb+'">' : I_FILM}<div class="ov">${I_PLAY_O}</div></div>
+            <div class="vi"><div class="vi-n" title="${v.name}">${v.name}</div><div class="vi-s">${fmtSize(v.size)}</div></div>`;
+        c.addEventListener('click', e => {
+            if (e.target.closest('.vr')) return;
+            invoke('wallpaper.setVideo', { path: v.path });
+        });
+        c.querySelector('.vr').addEventListener('click', e => {
+            e.stopPropagation();
+            library.splice(i, 1); saveLibrary(); renderLibrary();
+        });
+        grid.appendChild(c);
+    });
+}
+
+async function genThumbnails() {
+    let changed = false;
+    for (let i = 0; i < library.length; i++) {
+        if (library[i].thumb) continue;
+        try {
+            const fn = await invoke('library.mapForPanel', { path: library[i].path });
+            // small delay so virtual host mapping takes effect
+            await new Promise(r => setTimeout(r, 200));
+            const url = 'https://video.localhost/' + encodeURIComponent(fn);
+            const thumb = await captureThumbnail(url);
+            if (thumb) { library[i].thumb = thumb; changed = true; renderLibrary(); }
+        } catch {}
+    }
+    if (changed) { saveLibrary(); updateNpThumb(); }
+}
+
+function captureThumbnail(url) {
+    return new Promise(resolve => {
+        const v = document.createElement('video');
+        v.muted = true; v.preload = 'metadata';
+        let done = false;
+        const finish = () => { if (done) return; done = true; try { v.pause(); v.removeAttribute('src'); v.load(); } catch{} };
+        v.onloadedmetadata = () => { v.currentTime = Math.min(2, v.duration * 0.1 || 1); };
+        v.onseeked = () => {
+            try {
+                const c = document.createElement('canvas');
+                const w = v.videoWidth || 192, h = v.videoHeight || 108;
+                c.width = 192; c.height = Math.round(192 * h / w);
+                c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+                resolve(c.toDataURL('image/jpeg', 0.75));
+            } catch { resolve(null); }
+            finish();
+        };
+        v.onerror = () => { resolve(null); finish(); };
+        setTimeout(() => { if (!done) { resolve(null); finish(); } }, 10000);
+        v.src = url;
+    });
+}
+
+async function addEntries(entries) {
+    const existing = new Set(library.map(v => v.path));
+    const fresh = entries.filter(e => !existing.has(e.path));
+    if (!fresh.length) return;
+    library.push(...fresh);
+    await saveLibrary();
+    renderLibrary();
+    genThumbnails();
+}
+
+document.getElementById('btnAddFiles').onclick = async () => {
+    try { const f = await invoke('library.addFiles'); if (f && f.length) addEntries(f); } catch {}
+};
+document.getElementById('btnAddFolder').onclick = async () => {
+    try { const f = await invoke('library.addFolder'); if (f && f.length) addEntries(f); } catch {}
+};
+
+refreshState();
+loadLibrary();
+setInterval(refreshState, 2000);
+</script>
+</body>
+</html>

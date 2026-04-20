@@ -78,6 +78,12 @@ if (!nativeOnly) {
     if (existsSync(configSrc)) {
         await Bun.write(join(DIST, 'app.config.json'), Bun.file(configSrc));
     }
+
+    // Copy panel.html
+    const panelSrc = join(ROOT, 'src', 'panel.html');
+    if (existsSync(panelSrc)) {
+        await Bun.write(join(DIST, 'panel.html'), Bun.file(panelSrc));
+    }
 }
 
 if (frontendOnly) {
@@ -158,7 +164,7 @@ if (singleExe) {
     writeFileSync(rcFile, rcContent, 'utf-8');
 } else {
     if (existsSync(icoFile)) {
-        writeFileSync(rcFile, 'IDI_APP ICON "app.ico"\n', 'utf-8');
+        writeFileSync(rcFile, '#include "resource.h"\nIDI_APP ICON "app.ico"\n', 'utf-8');
     }
 }
 
