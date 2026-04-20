@@ -1,0 +1,15 @@
+{
+    "window": {
+        "title": "动态壁纸",
+        "width": 1920,
+        "height": 1080,
+        "frameless": false,
+        "backgroundColor": "#000000",
+        "singleInstance": true
+    },
+    "dev": {
+        "port": 3000
+    },
+    "build": {
+    }
+}

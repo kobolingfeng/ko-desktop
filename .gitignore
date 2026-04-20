@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+native/app.rc
+native/app.res
+
+# WebView2 deps (downloaded by setup script)
+deps/
+
+# OS files
+*.exe
+*.obj
+*.pdb
+*.ilk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug logs
+*.log
+
+# Bun
+bun.lockb
+
+# Sample video (too large for git)
+sample.mp4
+
+# AI/IDE plugins
+.ai-switch/
+
+# Config
+.env
+.env.local
