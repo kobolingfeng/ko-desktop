@@ -239,6 +239,21 @@ static void ipc_dispatch(LPCWSTR raw) {
 //  Wallpaper embedding — place window behind desktop icons
 // ================================================================
 
+// Clean up stale WorkerW from a previous crash/force-kill
+static void cleanupStaleWorkerW() {
+    HWND progman = FindWindowW(L"Progman", nullptr);
+    if (!progman) return;
+    // Check for visible WorkerW child of Progman (created by 0x052C)
+    HWND ww = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+    if (ww && IsWindowVisible(ww)) {
+        ShowWindow(ww, SW_HIDE);
+        // Re-apply wallpaper
+        wchar_t wp[MAX_PATH] = {};
+        SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wp, 0);
+        SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wp, SPIF_SENDCHANGE);
+    }
+}
+
 // Mirror window proc — just paints what we copy into it
 static LRESULT CALLBACK MirrorProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
@@ -311,6 +326,10 @@ static void restoreDesktop() {
         ShowWindow(g_workerW, SW_HIDE);
         g_workerW = nullptr;
     }
+    // Force Windows to re-apply the wallpaper (removes black background)
+    wchar_t wallpaper[MAX_PATH] = {};
+    SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaper, 0);
+    SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper, SPIF_SENDCHANGE);
 }
 
 // ================================================================
@@ -799,6 +818,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+    // Clean up stale WorkerW from previous crash
+    cleanupStaleWorkerW();
 
     // Parse --dev <url>
     int argc;
