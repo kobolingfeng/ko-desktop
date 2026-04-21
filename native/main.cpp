@@ -40,10 +40,14 @@
 #include <algorithm>
 #include <windowsx.h>
 #include <dwmapi.h>
+#include <wincodec.h>
+#include <wincrypt.h>
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "crypt32.lib")
 
 #include "resource.h"
 
@@ -79,6 +83,68 @@ static std::wstring exe_dir() {
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     PathRemoveFileSpecW(p);
     return p;
+}
+
+// ================================================================
+//  Shell thumbnail → base64 JPEG data URI
+// ================================================================
+
+static std::string getShellThumbnail(const std::wstring& path, int tw = 256, int th = 144) {
+    ComPtr<IShellItem> item;
+    if (FAILED(SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&item))))
+        return {};
+
+    ComPtr<IShellItemImageFactory> fac;
+    if (FAILED(item.As(&fac))) return {};
+
+    HBITMAP hbmp = nullptr;
+    SIZE sz = { tw, th };
+    if (FAILED(fac->GetImage(sz, SIIGBF_RESIZETOFIT, &hbmp)) || !hbmp) return {};
+
+    // Encode via WIC
+    ComPtr<IWICImagingFactory> wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)))) {
+        DeleteObject(hbmp); return {};
+    }
+    ComPtr<IWICBitmap> wb;
+    if (FAILED(wic->CreateBitmapFromHBITMAP(hbmp, nullptr, WICBitmapIgnoreAlpha, &wb))) {
+        DeleteObject(hbmp); return {};
+    }
+    DeleteObject(hbmp);
+
+    ComPtr<IStream> stm;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stm))) return {};
+
+    ComPtr<IWICBitmapEncoder> enc;
+    if (FAILED(wic->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &enc))) return {};
+    if (FAILED(enc->Initialize(stm.Get(), WICBitmapEncoderNoCache))) return {};
+
+    ComPtr<IWICBitmapFrameEncode> frame;
+    if (FAILED(enc->CreateNewFrame(&frame, nullptr))) return {};
+    if (FAILED(frame->Initialize(nullptr))) return {};
+
+    UINT bw, bh; wb->GetSize(&bw, &bh);
+    frame->SetSize(bw, bh);
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat24bppBGR;
+    frame->SetPixelFormat(&fmt);
+    if (FAILED(frame->WriteSource(wb.Get(), nullptr))) return {};
+    frame->Commit(); enc->Commit();
+
+    STATSTG stat; stm->Stat(&stat, STATFLAG_NONAME);
+    DWORD size = stat.cbSize.LowPart;
+    LARGE_INTEGER zero{}; stm->Seek(zero, STREAM_SEEK_SET, nullptr);
+    std::vector<BYTE> buf(size);
+    ULONG rd; stm->Read(buf.data(), size, &rd);
+
+    DWORD b64Len = 0;
+    CryptBinaryToStringA(buf.data(), rd,
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &b64Len);
+    std::string b64(b64Len, '\0');
+    CryptBinaryToStringA(buf.data(), rd,
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, b64.data(), &b64Len);
+    b64.resize(b64Len);
+    return "data:image/jpeg;base64," + b64;
 }
 
 // ================================================================
@@ -351,6 +417,7 @@ static void restoreDesktop() {
 // ================================================================
 
 static bool g_panelVisible = false;
+static const int RESIZE_BORDER = 6;
 
 static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -364,6 +431,31 @@ static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         ShowWindow(h, SW_HIDE);
         g_panelVisible = false;
         return 0;
+    case WM_NCCALCSIZE:
+        if (w == TRUE) return 0;
+        break;
+    case WM_NCHITTEST: {
+        POINT pt = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+        RECT rc; GetWindowRect(h, &rc);
+        bool left   = pt.x - rc.left   < RESIZE_BORDER;
+        bool right  = rc.right  - pt.x < RESIZE_BORDER;
+        bool top    = pt.y - rc.top    < RESIZE_BORDER;
+        bool bottom = rc.bottom - pt.y < RESIZE_BORDER;
+        if (top && left)     return HTTOPLEFT;
+        if (top && right)    return HTTOPRIGHT;
+        if (bottom && left)  return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (left)            return HTLEFT;
+        if (right)           return HTRIGHT;
+        if (top)             return HTTOP;
+        if (bottom)          return HTBOTTOM;
+        return HTCLIENT;
+    }
+    case WM_GETMINMAXINFO: {
+        auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
+        mmi->ptMinTrackSize = { 600, 400 };
+        return 0;
+    }
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -443,9 +535,9 @@ static void createPanelWindow(HINSTANCE hi) {
     int sy = (screenH - panelH) / 2;
 
     g_panelHwnd = CreateWindowExW(
-        0,
+        WS_EX_APPWINDOW,
         L"KoDesktop_Panel", L"动态壁纸",
-        WS_POPUP | WS_CLIPCHILDREN,
+        WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN,
         sx, sy, PANEL_W, panelH,
         nullptr, nullptr, hi, nullptr);
 
@@ -666,9 +758,24 @@ static void reg_wallpaper_ctrl() {
         return true;
     });
 
+    ipc_on("panel.minimize", [](const json&) -> json {
+        if (g_panelHwnd) {
+            ShowWindow(g_panelHwnd, SW_MINIMIZE);
+        }
+        return true;
+    });
+
     ipc_on("panel.toggle", [](const json&) -> json {
         g_panelVisible ? hidePanel() : showPanel();
         return true;
+    });
+
+    ipc_on("library.thumbnail", [](const json& a) -> json {
+        auto p = a.value("path", std::string{});
+        if (p.empty()) return nullptr;
+        auto result = getShellThumbnail(U2W(p));
+        if (result.empty()) return nullptr;
+        return result;
     });
 }
 

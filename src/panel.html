@@ -52,7 +52,10 @@ body{
 
 /* main split */
 .main{flex:1;display:flex;overflow:hidden}
-.col-l{width:290px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;border-right:1px solid var(--border);padding:14px;background:var(--surface)}
+.col-l{width:290px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;padding:14px;background:var(--surface)}
+.resizer{width:5px;flex-shrink:0;cursor:col-resize;background:var(--border);transition:background .15s;position:relative}
+.resizer:hover,.resizer.active{background:var(--accent)}
+.resizer::after{content:'';position:absolute;inset:-2px -4px;z-index:1}
 .col-r{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px;background:var(--bg)}
 .col-l::-webkit-scrollbar,.lib::-webkit-scrollbar{width:4px}
 .col-l::-webkit-scrollbar-thumb,.lib::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
@@ -213,7 +216,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
 <div class="main">
 
 <!-- LEFT: CONTROLS -->
-<div class="col-l">
+<div class="col-l" id="colL">
 
     <div class="sec">
         <div class="sec-t">正在播放</div>
@@ -267,6 +270,9 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
     </button>
 </div>
 
+<!-- RESIZER -->
+<div class="resizer" id="colResizer"></div>
+
 <!-- RIGHT: VIDEO LIBRARY -->
 <div class="col-r">
     <div class="rh">
@@ -300,7 +306,7 @@ const pending = new Map();
 let nextId = 0;
 const hasWV = typeof window !== 'undefined' && 'chrome' in window && 'webview' in window.chrome;
 
-// ── Window drag via JS (WS_POPUP has no native titlebar) ──
+// ── Window drag via JS ──
 (function(){
     const bar = document.getElementById('titlebar');
     let dragging = false, dx = 0, dy = 0;
@@ -316,6 +322,33 @@ const hasWV = typeof window !== 'undefined' && 'chrome' in window && 'webview' i
         if (hasWV) window.chrome.webview.postMessage({ id: -999, cmd: 'panel.moveBy', args: { x: mx, y: my } });
     });
     document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+// ── Column resizer ──
+(function(){
+    const resizer = document.getElementById('colResizer');
+    const col = document.getElementById('colL');
+    const MIN_L = 220, MIN_R = 250;
+    let dragging = false, startX, startW;
+    resizer.addEventListener('mousedown', e => {
+        dragging = true; startX = e.clientX; startW = col.offsetWidth;
+        resizer.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        let nw = startW + (e.clientX - startX);
+        const maxW = document.body.clientWidth - MIN_R - 5;
+        nw = Math.max(MIN_L, Math.min(maxW, nw));
+        col.style.width = nw + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+    });
 })();
 
 function invoke(cmd, args = {}) {
@@ -386,8 +419,14 @@ function updateNpThumb() {
     }
 }
 
+// ── Button handlers ──
+// Minimize → taskbar icon stays
+document.getElementById('btnMin').onclick = () => invoke('panel.minimize');
+// Close → hide to tray only
 document.getElementById('btnClose').onclick = () => invoke('panel.hide');
-document.getElementById('btnMin').onclick = () => invoke('panel.hide');
+// Exit → quit entire app
+document.getElementById('btnExit').onclick = () => invoke('app.exit');
+
 document.getElementById('btnPlayPause').onclick = async () => {
     state.paused = !state.paused;
     await invoke(state.paused ? 'wallpaper.pause' : 'wallpaper.play'); updateUI();
@@ -413,13 +452,12 @@ document.getElementById('muteToggle').onclick = async () => {
     state.muted = !state.muted;
     await invoke('wallpaper.setMuted', { muted: state.muted }); updateUI();
 };
-document.getElementById('btnExit').onclick = () => invoke('app.exit');
 
 window.addEventListener('ipc:wallpaper.stateChanged', e => {
     Object.assign(state, e.detail); updateUI();
 });
 
-// ── Library ─────────────────
+// ── Library (thumbnails via native Shell API) ─────────────────
 let library = [];
 
 function fmtSize(b) {
@@ -468,38 +506,11 @@ async function genThumbnails() {
     for (let i = 0; i < library.length; i++) {
         if (library[i].thumb) continue;
         try {
-            const fn = await invoke('library.mapForPanel', { path: library[i].path });
-            // small delay so virtual host mapping takes effect
-            await new Promise(r => setTimeout(r, 200));
-            const url = 'https://video.localhost/' + encodeURIComponent(fn);
-            const thumb = await captureThumbnail(url);
+            const thumb = await invoke('library.thumbnail', { path: library[i].path });
             if (thumb) { library[i].thumb = thumb; changed = true; renderLibrary(); }
         } catch {}
     }
     if (changed) { saveLibrary(); updateNpThumb(); }
-}
-
-function captureThumbnail(url) {
-    return new Promise(resolve => {
-        const v = document.createElement('video');
-        v.muted = true; v.preload = 'metadata';
-        let done = false;
-        const finish = () => { if (done) return; done = true; try { v.pause(); v.removeAttribute('src'); v.load(); } catch{} };
-        v.onloadedmetadata = () => { v.currentTime = Math.min(2, v.duration * 0.1 || 1); };
-        v.onseeked = () => {
-            try {
-                const c = document.createElement('canvas');
-                const w = v.videoWidth || 192, h = v.videoHeight || 108;
-                c.width = 192; c.height = Math.round(192 * h / w);
-                c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-                resolve(c.toDataURL('image/jpeg', 0.75));
-            } catch { resolve(null); }
-            finish();
-        };
-        v.onerror = () => { resolve(null); finish(); };
-        setTimeout(() => { if (!done) { resolve(null); finish(); } }, 10000);
-        v.src = url;
-    });
 }
 
 async function addEntries(entries) {
