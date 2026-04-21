@@ -14,10 +14,16 @@ const frontendOnly = process.argv.includes('--frontend-only');
 // ── Load config ───────────────────────────────────────
 let buildCommand: string | undefined;
 let buildOutDir: string | undefined;
+let binaryName: string = 'app.exe';
+let packExcludeDirs: string[] = [];
+let packExcludeFiles: string[] = [];
 try {
     const cfg = await Bun.file(join(ROOT, 'app.config.json')).json();
     buildCommand = cfg?.build?.command;
     buildOutDir  = cfg?.build?.outDir;
+    if (cfg?.build?.binaryName) binaryName = cfg.build.binaryName.endsWith('.exe') ? cfg.build.binaryName : cfg.build.binaryName + '.exe';
+    if (Array.isArray(cfg?.build?.packExcludeDirs))  packExcludeDirs  = cfg.build.packExcludeDirs;
+    if (Array.isArray(cfg?.build?.packExcludeFiles)) packExcludeFiles = cfg.build.packExcludeFiles;
 } catch {}
 
 // ── Check deps ────────────────────────────────────────
@@ -111,7 +117,7 @@ const vcvarsall = join(vsPath, 'VC', 'Auxiliary', 'Build', 'vcvarsall.bat');
 
 // ── 3. Resource file ──────────────────────────────────
 const mainCpp = join(ROOT, 'native', 'main.cpp');
-const outExe  = join(DIST, 'app.exe');
+const outExe  = join(DIST, binaryName);
 const rcFile  = join(ROOT, 'native', 'app.rc');
 const icoFile = join(ROOT, 'native', 'app.ico');
 const resFile = join(ROOT, 'native', 'app.res');
@@ -121,14 +127,15 @@ if (singleExe) {
     const embeddedCfg = join(ROOT, 'native', '_embedded.json');
 
     const distFiles: { path: string; data: Buffer }[] = [];
-    const skipDirs = new Set(['data', 'EBWebView']);
+    const skipDirs  = new Set(['data', 'EBWebView', ...packExcludeDirs]);
+    const skipFiles = new Set([binaryName, 'app.config.json', 'webview_debug.log', ...packExcludeFiles]);
     const collectFiles = (dir: string, prefix: string) => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const full = join(dir, entry.name);
             const rel = prefix ? prefix + '/' + entry.name : entry.name;
             if (entry.isDirectory()) {
                 if (!skipDirs.has(entry.name)) collectFiles(full, rel);
-            } else if (entry.name !== 'app.exe' && entry.name !== 'app.config.json') {
+            } else if (!skipFiles.has(entry.name)) {
                 distFiles.push({ path: rel, data: readFileSync(full) });
             }
         }
