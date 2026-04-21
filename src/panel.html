@@ -185,6 +185,10 @@ input[type=range]:active::-webkit-slider-thumb{background:var(--accent-h);box-sh
 .seg-btn:hover:not(.on){color:var(--txt);background:var(--surface-h)}
 .seg-btn.on{background:var(--surface-h);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.3)}
 .seg-btn svg{width:12px;height:12px}
+/* Grid variant for 4 items: 2 cols x 2 rows (compact) */
+.seg-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;flex:1}
+.seg-grid .seg-btn{flex:none;padding:6px 4px;font-size:11px;gap:3px}
+.seg-grid .seg-btn svg{width:14px;height:14px}
 
 /* ── Exit button ── */
 .exit-btn{
@@ -385,6 +389,27 @@ body.rz-nesw,body.rz-nesw *{cursor:nesw-resize !important}
                 </button>
             </div>
         </div>
+        <div class="srow" style="margin-top:10px;align-items:flex-start">
+            <span class="lbl" style="padding-top:6px">显示</span>
+            <div class="seg seg-grid">
+                <button class="seg-btn" id="dispFill"    title="填充 — 按比例裁剪铺满屏幕">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 9h18M3 15h18"/></svg>
+                    填充
+                </button>
+                <button class="seg-btn" id="dispFit"     title="适应 — 保持比例，四周留黑边">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="6" y="8" width="12" height="8" rx="0.5"/></svg>
+                    适应
+                </button>
+                <button class="seg-btn" id="dispStretch" title="拉伸 — 强制铺满，会变形">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M6 12h12M8 10l-2 2 2 2M16 10l2 2-2 2"/></svg>
+                    拉伸
+                </button>
+                <button class="seg-btn" id="dispCenter"  title="居中 — 原始尺寸居中显示">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1"/><rect x="9" y="9" width="6" height="6" rx="0.5"/></svg>
+                    居中
+                </button>
+            </div>
+        </div>
     </div>
 
     <button class="exit-btn" id="btnExit">
@@ -549,7 +574,7 @@ if (hasWV) {
     });
 }
 
-let state = { speed: 1, volume: 1, muted: false, paused: false, videoPath: '', playbackMode: 'loop-one' };
+let state = { speed: 1, volume: 1, muted: false, paused: false, videoPath: '', playbackMode: 'loop-one', displayMode: 'fill' };
 
 const I_PLAY  = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="7,3 20,12 7,21"/></svg>';
 const I_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>';
@@ -583,6 +608,12 @@ function updateUI() {
     const mode = state.playbackMode === 'loop-list' ? 'loop-list' : 'loop-one';
     document.getElementById('modeLoopOne').classList.toggle('on', mode === 'loop-one');
     document.getElementById('modeLoopList').classList.toggle('on', mode === 'loop-list');
+
+    const dm = state.displayMode || 'fill';
+    document.getElementById('dispFill').classList.toggle('on', dm === 'fill');
+    document.getElementById('dispFit').classList.toggle('on', dm === 'fit');
+    document.getElementById('dispStretch').classList.toggle('on', dm === 'stretch');
+    document.getElementById('dispCenter').classList.toggle('on', dm === 'center');
 
     updateNpThumb();
     if (library.length) renderLibrary();
@@ -640,6 +671,16 @@ document.getElementById('modeLoopList').onclick = async () => {
     state.playbackMode = 'loop-list';
     await invoke('wallpaper.setPlaybackMode', { mode: 'loop-list' }); updateUI();
 };
+
+async function setDisp(mode) {
+    state.displayMode = mode;
+    await invoke('wallpaper.setDisplayMode', { mode });
+    updateUI();
+}
+document.getElementById('dispFill').onclick    = () => setDisp('fill');
+document.getElementById('dispFit').onclick     = () => setDisp('fit');
+document.getElementById('dispStretch').onclick = () => setDisp('stretch');
+document.getElementById('dispCenter').onclick  = () => setDisp('center');
 
 window.addEventListener('ipc:wallpaper.stateChanged', e => {
     Object.assign(state, e.detail); updateUI();

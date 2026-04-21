@@ -25,6 +25,7 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <cstdio>
+#include <cstdarg>
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
 #include <shobjidl.h>
@@ -37,6 +38,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <vector>
 #include <algorithm>
 #include <windowsx.h>
 #include <dwmapi.h>
@@ -83,6 +85,46 @@ static std::wstring exe_dir() {
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     PathRemoveFileSpecW(p);
     return p;
+}
+
+// ================================================================
+//  Media folder state (for our custom media.localhost server)
+// ================================================================
+
+static std::wstring g_mediaFolder;  // Folder currently backing media.localhost
+
+// Percent-decode a URL path segment (ASCII subset sufficient for our use).
+static std::string urlDecode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            auto hex = s.substr(i + 1, 2);
+            char* end = nullptr;
+            unsigned v = std::strtoul(hex.c_str(), &end, 16);
+            if (end == hex.c_str() + 2) { out.push_back((char)v); i += 2; continue; }
+        }
+        out.push_back(s[i] == '+' ? ' ' : s[i]);
+    }
+    return out;
+}
+
+// ================================================================
+//  Diagnostic logging
+// ================================================================
+
+static void dlog(const char* fmt, ...) {
+    auto logPath = exe_dir() + L"\\webview_debug.log";
+    FILE* f = _wfopen(logPath.c_str(), L"a");
+    if (!f) return;
+    SYSTEMTIME st; GetLocalTime(&st);
+    fprintf(f, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
 }
 
 // ================================================================
@@ -219,12 +261,15 @@ static std::string loadResourceString(int id) {
 
 static void loadPak() {
     HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCE(IDR_HTML), RT_RCDATA);
-    if (!hRes) return;
+    if (!hRes) { dlog("loadPak: FindResource failed"); return; }
     HGLOBAL hData = LoadResource(nullptr, hRes);
-    if (!hData) return;
+    if (!hData) { dlog("loadPak: LoadResource failed"); return; }
     DWORD totalSize = SizeofResource(nullptr, hRes);
     const char* base = (const char*)LockResource(hData);
-    if (!base || totalSize < 4 || base[0] != 'Q' || base[1] != 'Q') return;
+    if (!base || totalSize < 4 || base[0] != 'Q' || base[1] != 'Q') {
+        dlog("loadPak: bad magic or size=%lu", totalSize);
+        return;
+    }
     const char* end = base + totalSize;
     const char* p = base + 2;
     uint16_t count; memcpy(&count, p, 2); p += 2;
@@ -239,6 +284,7 @@ static void loadPak() {
         g_pakEntries.push_back({path, p, dataLen});
         p += dataLen;
     }
+    dlog("loadPak: loaded %zu entries (total=%lu bytes)", g_pakEntries.size(), totalSize);
 }
 
 static const PakEntry* findPakEntry(const std::string& path) {
@@ -489,13 +535,59 @@ static void setupPanelWebView(ICoreWebView2Controller* ctrl) {
         ctrl2->put_DefaultBackgroundColor({255, 13, 11, 31}); // #0d0b1f dark purple
     }
 
-    // Virtual host mapping for panel
-    ComPtr<ICoreWebView2_3> v3;
-    if (SUCCEEDED(g_panelView.As(&v3))) {
-        auto base = exe_dir();
-        v3->SetVirtualHostNameToFolderMapping(
-            L"app.localhost", base.c_str(),
-            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+    // Virtual host mapping / pak interception for panel
+#ifdef SINGLE_EXE
+    if (!g_pakEntries.empty() && g_devUrl.empty()) {
+        // Single-exe mode: intercept requests and serve from embedded pak
+        // Use HTTPS to match media.localhost scheme (avoids mixed-content issues)
+        g_panelView->AddWebResourceRequestedFilter(
+            L"https://app.localhost/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        g_panelView->add_WebResourceRequested(
+            Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+                ComPtr<ICoreWebView2WebResourceRequest> request;
+                args->get_Request(&request);
+                LPWSTR uri;
+                request->get_Uri(&uri);
+                std::wstring wUri(uri);
+                CoTaskMemFree(uri);
+
+                const std::wstring prefix = L"https://app.localhost/";
+                std::string path;
+                if (wUri.size() > prefix.size())
+                    path = W2U(wUri.substr(prefix.size()));
+                auto qpos = path.find('?');
+                if (qpos != std::string::npos) path = path.substr(0, qpos);
+                if (path.empty()) path = "panel.html";
+
+                auto* entry = findPakEntry(path);
+                if (!entry) return S_OK;
+
+                auto mime = guessMimeType(path);
+                ComPtr<IStream> stream;
+                stream.Attach(SHCreateMemStream(
+                    reinterpret_cast<const BYTE*>(entry->data), entry->size));
+                if (!stream) return S_OK;
+
+                ComPtr<ICoreWebView2WebResourceResponse> response;
+                g_env->CreateWebResourceResponse(
+                    stream.Get(), 200, L"OK",
+                    (L"Content-Type: " + mime).c_str(),
+                    &response);
+                args->put_Response(response.Get());
+                return S_OK;
+            }).Get(), nullptr);
+    } else
+#endif
+    {
+        ComPtr<ICoreWebView2_3> v3;
+        if (SUCCEEDED(g_panelView.As(&v3))) {
+            auto base = exe_dir();
+            v3->SetVirtualHostNameToFolderMapping(
+                L"app.localhost", base.c_str(),
+                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+            dlog("[panel] virtual host mapping -> %ls", base.c_str());
+        }
     }
 
     // IPC handler for panel
@@ -676,6 +768,15 @@ static void reg_wallpaper_ctrl() {
         return true;
     });
 
+    ipc_on("wallpaper.setDisplayMode", [](const json& a) -> json {
+        auto mode = a.value("mode", std::string{"fill"});
+        if (mode != "fill" && mode != "fit" && mode != "stretch" && mode != "center")
+            mode = "fill";
+        g_wpState["displayMode"] = mode;
+        ipc_emit("wallpaper.setDisplayMode", {{"mode", mode}});
+        return true;
+    });
+
     ipc_on("wallpaper.pickVideo", [](const json&) -> json {
         ipc_emit("wallpaper.pickVideo");
         return true;
@@ -685,13 +786,7 @@ static void reg_wallpaper_ctrl() {
         auto filePath = a.value("path", std::string{});
         if (filePath.empty()) return false;
         auto wPath  = U2W(filePath);
-        auto parent = fspath::path(wPath).parent_path().wstring();
-        ComPtr<ICoreWebView2_3> v3;
-        if (SUCCEEDED(g_view.As(&v3))) {
-            v3->SetVirtualHostNameToFolderMapping(
-                L"media.localhost", parent.c_str(),
-                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-        }
+        g_mediaFolder = fspath::path(wPath).parent_path().wstring();
         auto filename = fspath::path(wPath).filename().string();
         ipc_emit("wallpaper.setVideo", {{"path", filePath}, {"filename", filename}});
         return true;
@@ -945,6 +1040,11 @@ static void reg_fs() {
 // ================================================================
 
 static void reg_app() {
+    ipc_on("debug.log", [](const json& a) -> json {
+        auto msg = a.value("msg", std::string{});
+        dlog("[js] %s", msg.c_str());
+        return true;
+    });
     ipc_on("app.exit", [](const json& a) -> json {
         restoreDesktop();
         PostQuitMessage(a.value("code", 0));
@@ -1060,15 +1160,7 @@ static void reg_media() {
         auto filePath = a.value("path", std::string{});
         if (filePath.empty()) return nullptr;
         auto wPath  = U2W(filePath);
-        auto parent = fspath::path(wPath).parent_path().wstring();
-
-        ComPtr<ICoreWebView2_3> v3;
-        if (SUCCEEDED(g_view.As(&v3))) {
-            v3->SetVirtualHostNameToFolderMapping(
-                L"media.localhost", parent.c_str(),
-                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-        }
-
+        g_mediaFolder = fspath::path(wPath).parent_path().wstring();
         auto filename = fspath::path(wPath).filename().string();
         return filename;
     });
@@ -1130,16 +1222,176 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
             args->get_WebErrorStatus(&status);
             LPWSTR uri = nullptr;
             sender->get_Source(&uri);
-            auto logPath = exe_dir() + L"\\webview_debug.log";
-            FILE* f = _wfopen(logPath.c_str(), L"a");
-            if (f) {
-                fprintf(f, "NavCompleted: success=%d, status=%d, uri=%ls\n",
-                    (int)success, (int)status, uri ? uri : L"(null)");
-                fclose(f);
-            }
+            dlog("[main] NavCompleted success=%d status=%d uri=%ls",
+                (int)success, (int)status, uri ? uri : L"(null)");
             if (uri) CoTaskMemFree(uri);
             return S_OK;
         }).Get(), nullptr);
+
+    // ── Custom media.localhost server ──
+    // Serves files from g_mediaFolder with full Range request support so video
+    // playback works from ANY folder (not just the initial mapping). This replaces
+    // SetVirtualHostNameToFolderMapping for media.localhost because WebView2's
+    // virtual host re-mapping after initial registration has reliability issues.
+    g_view->AddWebResourceRequestedFilter(
+        L"https://media.localhost/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    g_view->add_WebResourceRequested(
+        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+        [](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+            ComPtr<ICoreWebView2WebResourceRequest> req;
+            args->get_Request(&req);
+            LPWSTR uriRaw = nullptr;
+            if (req) req->get_Uri(&uriRaw);
+            std::wstring wUri = uriRaw ? uriRaw : L"";
+            if (uriRaw) CoTaskMemFree(uriRaw);
+
+            // Parse URL: https://media.localhost/<filename>
+            const std::wstring prefix = L"https://media.localhost/";
+            if (wUri.size() <= prefix.size() || g_mediaFolder.empty()) return S_OK;
+            std::string encoded = W2U(wUri.substr(prefix.size()));
+            auto qpos = encoded.find('?');
+            if (qpos != std::string::npos) encoded = encoded.substr(0, qpos);
+            std::string filename = urlDecode(encoded);
+            // Reject any path traversal
+            if (filename.find("..") != std::string::npos ||
+                filename.find('/') != std::string::npos ||
+                filename.find('\\') != std::string::npos) return S_OK;
+
+            fspath::path fullPath = fspath::path(g_mediaFolder) / U2W(filename);
+            std::error_code ec;
+            auto fileSize = fspath::file_size(fullPath, ec);
+            if (ec) {
+                dlog("[media] file not found: %ls", fullPath.c_str());
+                return S_OK;
+            }
+
+            // Parse Range header if present
+            long long rangeStart = 0;
+            long long rangeEnd = (long long)fileSize - 1;
+            bool isRange = false;
+            ComPtr<ICoreWebView2HttpRequestHeaders> reqHdrs;
+            if (req) req->get_Headers(&reqHdrs);
+            if (reqHdrs) {
+                LPWSTR rangeVal = nullptr;
+                BOOL hasRange = FALSE;
+                reqHdrs->Contains(L"Range", &hasRange);
+                if (hasRange) reqHdrs->GetHeader(L"Range", &rangeVal);
+                if (rangeVal) {
+                    std::wstring rv = rangeVal;
+                    CoTaskMemFree(rangeVal);
+                    // Expect "bytes=<start>-<end>"
+                    auto eq = rv.find(L'=');
+                    if (eq != std::wstring::npos) {
+                        auto spec = rv.substr(eq + 1);
+                        auto dash = spec.find(L'-');
+                        if (dash != std::wstring::npos) {
+                            try { rangeStart = std::stoll(spec.substr(0, dash)); } catch(...) {}
+                            auto endStr = spec.substr(dash + 1);
+                            if (!endStr.empty()) {
+                                try { rangeEnd = std::stoll(endStr); } catch(...) {}
+                            }
+                            isRange = true;
+                        }
+                    }
+                }
+            }
+            if (rangeEnd >= (long long)fileSize) rangeEnd = (long long)fileSize - 1;
+            if (rangeStart < 0 || rangeStart > rangeEnd) return S_OK;
+            long long chunkLen = rangeEnd - rangeStart + 1;
+
+            // Read the range into memory — capped at 16MB per chunk to avoid
+            // OOM; Chromium will make additional range requests for more.
+            const long long MAX_CHUNK = 16LL * 1024 * 1024;
+            if (chunkLen > MAX_CHUNK) {
+                chunkLen = MAX_CHUNK;
+                rangeEnd = rangeStart + chunkLen - 1;
+            }
+            HANDLE hFile = CreateFileW(fullPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                dlog("[media] CreateFile failed for %ls err=%lu", fullPath.c_str(), GetLastError());
+                return S_OK;
+            }
+            LARGE_INTEGER li; li.QuadPart = rangeStart;
+            SetFilePointerEx(hFile, li, nullptr, FILE_BEGIN);
+
+            std::vector<BYTE> buf((size_t)chunkLen);
+            DWORD read = 0;
+            ReadFile(hFile, buf.data(), (DWORD)chunkLen, &read, nullptr);
+            CloseHandle(hFile);
+            if (read != chunkLen) {
+                dlog("[media] short read %lu/%lld for %ls", read, chunkLen, fullPath.c_str());
+                return S_OK;
+            }
+
+            // Guess MIME from extension
+            auto ext = fullPath.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            std::wstring contentType = L"application/octet-stream";
+            if      (ext == ".mp4" || ext == ".m4v") contentType = L"video/mp4";
+            else if (ext == ".webm")                  contentType = L"video/webm";
+            else if (ext == ".ogv" || ext == ".ogg") contentType = L"video/ogg";
+            else if (ext == ".mkv")                   contentType = L"video/x-matroska";
+            else if (ext == ".mov")                   contentType = L"video/quicktime";
+            else if (ext == ".avi")                   contentType = L"video/x-msvideo";
+            else if (ext == ".mp3")                   contentType = L"audio/mpeg";
+            else if (ext == ".wav")                   contentType = L"audio/wav";
+
+            // Build response
+            ComPtr<IStream> stream;
+            stream.Attach(SHCreateMemStream(buf.data(), (UINT)buf.size()));
+            if (!stream) return S_OK;
+
+            wchar_t headerBuf[512];
+            if (isRange) {
+                swprintf(headerBuf, 512,
+                    L"Content-Type: %s\r\n"
+                    L"Content-Length: %lld\r\n"
+                    L"Accept-Ranges: bytes\r\n"
+                    L"Content-Range: bytes %lld-%lld/%llu\r\n"
+                    L"Cache-Control: no-cache",
+                    contentType.c_str(), chunkLen, rangeStart, rangeEnd, (unsigned long long)fileSize);
+            } else {
+                swprintf(headerBuf, 512,
+                    L"Content-Type: %s\r\n"
+                    L"Content-Length: %lld\r\n"
+                    L"Accept-Ranges: bytes\r\n"
+                    L"Cache-Control: no-cache",
+                    contentType.c_str(), chunkLen);
+            }
+
+            ComPtr<ICoreWebView2WebResourceResponse> response;
+            g_env->CreateWebResourceResponse(
+                stream.Get(),
+                isRange ? 206 : 200,
+                isRange ? L"Partial Content" : L"OK",
+                headerBuf,
+                &response);
+            args->put_Response(response.Get());
+            return S_OK;
+        }).Get(), nullptr);
+
+    // Log only failed media responses (helps diagnose playback issues)
+    ComPtr<ICoreWebView2_2> v2;
+    if (SUCCEEDED(g_view.As(&v2))) {
+        v2->add_WebResourceResponseReceived(
+            Callback<ICoreWebView2WebResourceResponseReceivedEventHandler>(
+            [](ICoreWebView2*, ICoreWebView2WebResourceResponseReceivedEventArgs* args) -> HRESULT {
+                ComPtr<ICoreWebView2WebResourceResponseView> resp;
+                args->get_Response(&resp);
+                int status = -1;
+                if (resp) resp->get_StatusCode(&status);
+                if (status >= 200 && status < 400) return S_OK;
+                ComPtr<ICoreWebView2WebResourceRequest> req;
+                args->get_Request(&req);
+                LPWSTR uri = nullptr;
+                if (req) req->get_Uri(&uri);
+                if (uri && wcsstr(uri, L"media.localhost") != nullptr)
+                    dlog("[main] media response status=%d uri=%ls", status, uri);
+                if (uri) CoTaskMemFree(uri);
+                return S_OK;
+            }).Get(), nullptr);
+    }
 
     // Navigate
     if (dev) {
@@ -1147,8 +1399,10 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
     } else {
 #ifdef SINGLE_EXE
         if (!g_pakEntries.empty()) {
+            // media.localhost is now handled via a custom WebResourceRequested
+            // handler registered earlier in setupWebView, so no virtual host mapping.
             g_view->AddWebResourceRequestedFilter(
-                L"http://app.localhost/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+                L"https://app.localhost/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
             g_view->add_WebResourceRequested(
                 Callback<ICoreWebView2WebResourceRequestedEventHandler>(
                 [](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
@@ -1159,7 +1413,7 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
                     std::wstring wUri(uri);
                     CoTaskMemFree(uri);
 
-                    const std::wstring prefix = L"http://app.localhost/";
+                    const std::wstring prefix = L"https://app.localhost/";
                     std::string path;
                     if (wUri.size() > prefix.size())
                         path = W2U(wUri.substr(prefix.size()));
@@ -1184,20 +1438,18 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
                     args->put_Response(response.Get());
                     return S_OK;
                 }).Get(), nullptr);
-            g_view->Navigate(L"http://app.localhost/index.html");
+            g_view->Navigate(L"https://app.localhost/index.html");
         } else
 #endif
         {
             auto dir = exe_dir();
+            dlog("[main] fallback SetVirtualHostNameToFolderMapping -> %ls", dir.c_str());
             ComPtr<ICoreWebView2_3> v3;
             if (SUCCEEDED(g_view.As(&v3))) {
                 v3->SetVirtualHostNameToFolderMapping(
                     L"app.localhost", dir.c_str(),
                     COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-                // Pre-register media.localhost (will be re-mapped when user selects video)
-                v3->SetVirtualHostNameToFolderMapping(
-                    L"media.localhost", dir.c_str(),
-                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                // media.localhost is handled via custom WebResourceRequested handler
             }
             g_view->Navigate(L"https://app.localhost/index.html");
         }
@@ -1225,9 +1477,12 @@ static void init_webview() {
     auto dataDir = app_data_dir();
     auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
     options->put_AdditionalBrowserArguments(
-        L"--disable-features=msSmartScreenProtection,RendererCodeIntegrity,msWebOOUI,msPdfOOUI"
+        L"--disable-features=msSmartScreenProtection,RendererCodeIntegrity,msWebOOUI,msPdfOOUI,CalculateNativeWinOcclusion"
         L" --disable-background-networking --no-proxy-server"
-        L" --autoplay-policy=no-user-gesture-required");
+        L" --autoplay-policy=no-user-gesture-required"
+        // Keep wallpaper responsive even when backgrounded (it's always behind all windows)
+        L" --disable-background-timer-throttling"
+        L" --disable-renderer-backgrounding");
     CreateCoreWebView2EnvironmentWithOptions(nullptr, dataDir.c_str(), options.Get(),
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {

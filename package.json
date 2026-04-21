@@ -1,6 +1,6 @@
 {
   "name": "ko-desktop",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "超轻量动态桌面壁纸 — 基于强强框架",
   "scripts": {
     "setup": "bun scripts/setup.ts",

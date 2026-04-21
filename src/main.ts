@@ -3,10 +3,40 @@ import { dialog, fs, app, tray, menu, media } from './api';
 import { invoke, on } from './ipc';
 
 type PlaybackMode = 'loop-one' | 'loop-list';
+type DisplayMode = 'fill' | 'fit' | 'stretch' | 'center';
 
 const video = document.getElementById('player') as HTMLVideoElement;
 let currentVideoPath = '';
 let playbackMode: PlaybackMode = 'loop-one';
+let displayMode: DisplayMode = 'fill';
+
+// Diagnostic helper — sent to native webview_debug.log (errors only)
+const dbg = (msg: string) => { invoke('debug.log', { msg }).catch(() => {}); };
+window.addEventListener('error', (e) => dbg(`window.error: ${e.message} @${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e: any) => dbg(`unhandled: ${e.reason}`));
+video.addEventListener('error', () => {
+    const err = video.error;
+    dbg(`video.error code=${err?.code ?? 'null'} msg=${err?.message ?? ''} src=${video.currentSrc}`);
+});
+
+// ── VRR / high-refresh fix ───────────────────
+// On displays with VRR (GSync/FreeSync), a wallpaper video playing at 30fps
+// can drag the whole desktop's refresh rate down, causing ghosting/trailing
+// on other windows. Fix: drive an invisible 1px layer with rAF so the
+// Chromium compositor keeps producing frames at the display's native rate.
+// Cost is negligible (sub-pixel transform change per frame, GPU composited).
+(function pinCompositorToDisplayRate() {
+    const ghost = document.createElement('div');
+    ghost.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;' +
+        'pointer-events:none;will-change:transform;opacity:0.01;background:#000;';
+    document.body.appendChild(ghost);
+    let i = 0;
+    const tick = () => {
+        ghost.style.transform = `translateZ(${(i++ & 1) * 0.001}px)`;
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+})();
 
 // ── State sync with native ──────────────────
 
@@ -18,6 +48,7 @@ function reportState() {
         paused: video.paused,
         videoPath: currentVideoPath,
         playbackMode,
+        displayMode,
     }).catch(() => {});
 }
 
@@ -43,6 +74,18 @@ function applyPlaybackMode() {
     video.loop = playbackMode === 'loop-one';
 }
 
+// ── Display modes ────────────────────────────
+
+function applyDisplayMode() {
+    switch (displayMode) {
+        case 'fit':     video.style.objectFit = 'contain';    break;
+        case 'stretch': video.style.objectFit = 'fill';       break;
+        case 'center':  video.style.objectFit = 'none';       break;
+        case 'fill':
+        default:        video.style.objectFit = 'cover';      break;
+    }
+}
+
 // Listen for commands from the panel (via native)
 on('wallpaper.play', () => video.play());
 on('wallpaper.pause', () => video.pause());
@@ -55,6 +98,15 @@ on('wallpaper.setPlaybackMode', (d: any) => {
     applyPlaybackMode();
     reportState();
     scheduleSave();
+});
+on('wallpaper.setDisplayMode', (d: any) => {
+    const m = d.mode;
+    if (m === 'fill' || m === 'fit' || m === 'stretch' || m === 'center') {
+        displayMode = m;
+        applyDisplayMode();
+        reportState();
+        scheduleSave();
+    }
 });
 on('wallpaper.pickVideo', () => pickVideo());
 on('wallpaper.setVideo', async (d: any) => {
@@ -75,6 +127,7 @@ interface WallpaperConfig {
     muted?: boolean;
     speed?: number;
     playbackMode?: PlaybackMode;
+    displayMode?: DisplayMode;
 }
 
 async function loadConfig(): Promise<WallpaperConfig> {
@@ -99,6 +152,7 @@ async function saveConfig() {
                 muted: video.muted,
                 speed: video.playbackRate,
                 playbackMode,
+                displayMode,
             } satisfies WallpaperConfig)
         );
     } catch {}
@@ -119,7 +173,7 @@ async function playVideo(filePath: string) {
         currentVideoPath = filePath;
         const url = `https://media.localhost/${encodeURIComponent(filename)}`;
         video.src = url;
-        video.play().catch(() => {});
+        video.play().catch((e) => dbg(`play() rejected: ${e?.message ?? e}`));
         reportState();
         await saveConfig();
     } catch {}
@@ -173,6 +227,10 @@ async function showTrayMenu() {
     if (cfg.speed !== undefined) video.playbackRate = cfg.speed;
     if (cfg.playbackMode === 'loop-list') playbackMode = 'loop-list';
     applyPlaybackMode();
+    if (cfg.displayMode === 'fit' || cfg.displayMode === 'stretch' || cfg.displayMode === 'center' || cfg.displayMode === 'fill') {
+        displayMode = cfg.displayMode;
+    }
+    applyDisplayMode();
 
     // Restore last video, or auto-load sample.mp4
     if (cfg.videoPath) {
