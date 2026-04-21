@@ -5,22 +5,25 @@
 <title>系统终端</title>
 <style>
 :root{
-    --bg:#f0ede6;
-    --surface:#fff;
-    --surface-h:#f8f6f2;
-    --border:#d5d0c7;
-    --border-h:#b0a898;
-    --accent:#2d7a6f;
-    --accent-light:#e6f2f0;
-    --accent-h:#1f5b53;
-    --glow:rgba(45,122,111,.12);
-    --txt:#2c2c2c;
-    --txt2:#8a8578;
-    --green:#2d8a4e;
-    --amber:#c47f17;
-    --red:#c0392b;
-    --red-bg:rgba(192,57,43,.08);
-    --track:#ddd8d0;
+    --bg:#0d0b1f;
+    --surface:#17143a;
+    --surface-h:#211d4f;
+    --border:#2e2960;
+    --border-h:#4a4090;
+    --accent:#9168f5;
+    --accent-h:#b393ff;
+    --accent-dim:rgba(145,104,245,.14);
+    --cyan:#40d6f7;
+    --glow:rgba(145,104,245,.55);
+    --glow-soft:rgba(145,104,245,.2);
+    --cyan-glow:rgba(64,214,247,.5);
+    --txt:#eee8ff;
+    --txt2:#8f85c2;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --red:#f43f5e;
+    --red-bg:rgba(244,63,94,.12);
+    --track:#241f56;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{
@@ -32,170 +35,263 @@ body{
 
 /* titlebar */
 .bar{
-    display:flex;align-items:center;gap:10px;
-    padding:10px 16px;flex-shrink:0;cursor:default;
+    display:flex;align-items:center;gap:12px;
+    padding:11px 18px;flex-shrink:0;
     border-bottom:1px solid var(--border);
-    background:var(--surface);
+    background:linear-gradient(180deg,#1a1540 0%,#15112f 100%);
+    position:relative;
 }
-.bar-sym{width:16px;height:16px;border-radius:50%;border:2px solid var(--accent);position:relative;flex-shrink:0}
-.bar-sym::after{content:'';position:absolute;left:50%;top:2px;bottom:2px;width:2px;background:var(--accent);transform:translateX(-50%)}
-.bar h1{flex:1;font-size:14px;font-weight:600;letter-spacing:1px;color:var(--accent)}
+.bar::after{
+    content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
+    background:linear-gradient(90deg,transparent,var(--accent) 20%,var(--cyan) 50%,var(--accent) 80%,transparent);
+    opacity:.6;
+}
+.bar-sym{
+    width:18px;height:18px;flex-shrink:0;position:relative;
+    background:linear-gradient(135deg,var(--accent),var(--cyan));
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+    filter:drop-shadow(0 0 6px var(--glow));
+}
+.bar h1{
+    flex:1;font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+    background:linear-gradient(90deg,var(--accent) 0%,var(--cyan) 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 20px var(--glow-soft);
+}
 .bar-btn{
     cursor:pointer;
-    width:28px;height:28px;border:1px solid var(--border);border-radius:6px;
-    background:transparent;color:var(--txt2);
+    width:30px;height:30px;border:1px solid var(--border);border-radius:4px;
+    background:rgba(36,31,86,.3);color:var(--txt2);
     display:flex;align-items:center;justify-content:center;transition:all .15s;
 }
-.bar-btn:hover{border-color:var(--border-h);color:var(--txt);background:var(--surface-h)}
-.bar-btn.x:hover{border-color:var(--red);color:var(--red);background:var(--red-bg)}
+.bar-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim);box-shadow:0 0 8px var(--glow-soft)}
+.bar-btn.x:hover{border-color:var(--red);color:var(--red);background:var(--red-bg);box-shadow:0 0 8px rgba(244,63,94,.3)}
 .bar-btn svg{width:14px;height:14px}
 
 /* main split */
 .main{flex:1;display:flex;overflow:hidden}
-.col-l{width:290px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;padding:14px;background:var(--surface)}
-.resizer{width:5px;flex-shrink:0;cursor:col-resize;background:var(--border);transition:background .15s;position:relative}
-.resizer:hover,.resizer.active{background:var(--accent)}
+.col-l{
+    width:310px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;
+    padding:16px;background:linear-gradient(180deg,rgba(23,20,58,.6),rgba(13,11,31,.4));
+    border-right:1px solid var(--border);
+}
+.resizer{width:5px;flex-shrink:0;cursor:col-resize;background:var(--border);transition:all .15s;position:relative}
+.resizer:hover,.resizer.active{background:var(--accent);box-shadow:0 0 8px var(--glow)}
 .resizer::after{content:'';position:absolute;inset:-2px -4px;z-index:1}
-.col-r{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px;background:var(--bg)}
-.col-l::-webkit-scrollbar,.lib::-webkit-scrollbar{width:4px}
+.col-r{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px}
+.col-l::-webkit-scrollbar,.lib::-webkit-scrollbar{width:5px}
 .col-l::-webkit-scrollbar-thumb,.lib::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.col-l::-webkit-scrollbar-thumb:hover,.lib::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 
 /* section */
-.sec{margin-bottom:16px}
-.sec-t{font-size:12px;font-weight:600;letter-spacing:.5px;color:var(--accent);margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.sec-t::after{content:'';flex:1;height:1px;background:var(--border)}
+.sec{margin-bottom:18px}
+.sec-t{
+    font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+    color:var(--accent);margin-bottom:10px;
+    display:flex;align-items:center;gap:10px;
+    text-shadow:0 0 10px var(--glow-soft);
+}
+.sec-t::before{
+    content:'';width:3px;height:12px;background:var(--accent);
+    box-shadow:0 0 6px var(--glow);
+}
+.sec-t::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
 
 /* now playing */
 .np{display:flex;gap:12px;align-items:center}
 .np-thumb{
-    width:88px;height:50px;border-radius:6px;overflow:hidden;flex-shrink:0;
-    border:1px solid var(--border);background:#e8e4dc;
-    display:flex;align-items:center;justify-content:center;
+    width:92px;height:52px;border-radius:4px;overflow:hidden;flex-shrink:0;
+    border:1px solid var(--border);background:#0a0819;
+    display:flex;align-items:center;justify-content:center;position:relative;
+}
+.np-thumb::before{
+    content:'';position:absolute;inset:0;border-radius:4px;pointer-events:none;
+    box-shadow:inset 0 0 8px rgba(145,104,245,.15);
 }
 .np-thumb img{width:100%;height:100%;object-fit:cover}
 .np-thumb svg{width:22px;height:22px;color:var(--txt2)}
 .np-body{flex:1;min-width:0}
-.np-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.np-stat{font-size:12px;color:var(--txt2);margin-top:4px;display:flex;align-items:center;gap:6px}
-.ind{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.ind.on{background:var(--green);box-shadow:0 0 4px rgba(45,138,78,.4)}
-.ind.off{background:var(--amber);box-shadow:0 0 4px rgba(196,127,23,.3)}
-.ind.none{background:var(--txt2)}
+.np-name{font-size:13px;font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np-stat{font-size:12px;color:var(--txt2);margin-top:4px;display:flex;align-items:center;gap:7px;letter-spacing:.5px}
+.ind{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.ind.on{background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);animation:pulse 2s ease-in-out infinite}
+.ind.off{background:var(--amber);box-shadow:0 0 6px rgba(251,191,36,.5)}
+.ind.none{background:var(--txt2);opacity:.5}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 
 /* transport */
 .tr{display:flex;align-items:center;justify-content:center;gap:14px;padding:6px 0}
 .tb{
-    width:36px;height:36px;border:1px solid var(--border);border-radius:8px;
-    background:var(--surface);color:var(--txt2);cursor:pointer;
+    width:40px;height:40px;border:1px solid var(--border);border-radius:5px;
+    background:rgba(36,31,86,.4);color:var(--txt2);cursor:pointer;
     display:flex;align-items:center;justify-content:center;transition:all .15s;
 }
-.tb:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.tb:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim);box-shadow:0 0 10px var(--glow-soft)}
 .tb:active{transform:scale(.93)}
 .tb svg{width:16px;height:16px}
-.tb.pri{width:42px;height:42px;border-color:var(--accent);color:#fff;background:var(--accent);box-shadow:0 2px 8px var(--glow)}
-.tb.pri:hover{background:var(--accent-h)}
+.tb.pri{
+    width:48px;height:48px;border:1px solid var(--accent);color:#fff;
+    background:linear-gradient(135deg,var(--accent) 0%,#6d4dd9 100%);
+    box-shadow:0 0 16px var(--glow),inset 0 1px 0 rgba(255,255,255,.15);
+}
+.tb.pri:hover{background:linear-gradient(135deg,var(--accent-h) 0%,var(--accent) 100%);box-shadow:0 0 22px var(--glow)}
 .tb.pri svg{width:18px;height:18px}
 
 /* slider */
-.srow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.srow .lbl{font-size:12px;color:var(--txt2);width:48px;flex-shrink:0}
-.srow .val{font-size:13px;font-weight:600;color:var(--accent);min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.srow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.srow .lbl{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--txt2);width:48px;flex-shrink:0}
+.srow .val{font-size:13px;font-weight:700;color:var(--cyan);min-width:46px;text-align:right;font-variant-numeric:tabular-nums;text-shadow:0 0 8px var(--cyan-glow)}
 input[type=range]{
     flex:1;-webkit-appearance:none;appearance:none;
     height:4px;border-radius:2px;background:var(--track);outline:none;cursor:pointer;
+    border:1px solid var(--border);
 }
 input[type=range]::-webkit-slider-thumb{
     -webkit-appearance:none;appearance:none;
     width:14px;height:14px;border-radius:50%;
-    background:var(--accent);border:2px solid #fff;
-    box-shadow:0 1px 4px rgba(0,0,0,.2);
+    background:linear-gradient(135deg,var(--accent),var(--cyan));
+    border:2px solid #17143a;
+    box-shadow:0 0 8px var(--glow);
     transition:transform .1s;
 }
-input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25);box-shadow:0 0 12px var(--glow)}
 
 /* toggle */
-.trow{display:flex;align-items:center;gap:10px;margin-top:6px}
+.trow{display:flex;align-items:center;gap:10px;margin-top:8px}
 .tgl{
-    width:38px;height:20px;border-radius:10px;padding:0;
-    background:var(--track);cursor:pointer;border:none;
-    position:relative;transition:background .2s;
+    width:40px;height:20px;border-radius:10px;padding:0;
+    background:var(--track);cursor:pointer;border:1px solid var(--border);
+    position:relative;transition:all .2s;
 }
-.tgl.on{background:var(--accent)}
+.tgl.on{background:linear-gradient(90deg,var(--accent),#6d4dd9);border-color:var(--accent);box-shadow:0 0 8px var(--glow-soft)}
 .tgl::after{
-    content:'';position:absolute;top:2px;left:2px;
+    content:'';position:absolute;top:1px;left:1px;
     width:16px;height:16px;border-radius:50%;
-    background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);
+    background:#e0dbff;box-shadow:0 1px 3px rgba(0,0,0,.5);
     transition:transform .2s;
 }
-.tgl.on::after{transform:translateX(18px)}
-.tgl-lbl{font-size:12px;color:var(--txt2)}
+.tgl.on::after{transform:translateX(20px);background:#fff}
+.tgl-lbl{font-size:12px;font-weight:500;letter-spacing:.5px;color:var(--txt2)}
 
 /* exit btn */
 .exit-btn{
-    margin-top:auto;padding-top:10px;
-    height:34px;border:1px solid rgba(192,57,43,.2);border-radius:8px;
-    background:transparent;color:var(--red);font-family:inherit;
-    font-size:13px;font-weight:500;cursor:pointer;
+    margin-top:auto;padding:0;
+    height:38px;border:1px solid rgba(244,63,94,.3);border-radius:5px;
+    background:rgba(244,63,94,.06);color:var(--red);font-family:inherit;
+    font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;
     display:flex;align-items:center;justify-content:center;gap:8px;transition:all .15s;
 }
-.exit-btn:hover{background:var(--red-bg);border-color:var(--red)}
+.exit-btn:hover{background:var(--red-bg);border-color:var(--red);box-shadow:0 0 10px rgba(244,63,94,.3)}
 .exit-btn svg{width:14px;height:14px}
 
 /* right col header */
 .rh{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-shrink:0}
 .rh .sec-t{margin-bottom:0;flex:1}
 .rh-btn{
-    width:30px;height:30px;border:1px solid var(--border);border-radius:6px;
-    background:var(--surface);color:var(--txt2);cursor:pointer;
+    width:32px;height:32px;border:1px solid var(--border);border-radius:4px;
+    background:rgba(36,31,86,.4);color:var(--txt2);cursor:pointer;
     display:flex;align-items:center;justify-content:center;transition:all .15s;
 }
-.rh-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.rh-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim);box-shadow:0 0 8px var(--glow-soft)}
 .rh-btn svg{width:14px;height:14px}
 
-/* library grid */
+/* library grid — fixed card width; window size only affects column count */
 .lib{flex:1;overflow-y:auto;padding-right:2px}
-.lgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.empty{text-align:center;padding:50px 0;color:var(--txt2);font-size:13px}
-.empty svg{width:36px;height:36px;opacity:.3;display:block;margin:0 auto 10px}
+.lgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,220px);justify-content:start}
+.empty{text-align:center;padding:60px 0;color:var(--txt2);font-size:13px;letter-spacing:.5px}
+.empty svg{width:40px;height:40px;opacity:.35;display:block;margin:0 auto 12px;color:var(--accent)}
 
 /* video card */
 .vc{
-    border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;
+    border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:pointer;
     background:var(--surface);transition:all .15s;position:relative;
 }
-.vc:hover{border-color:var(--border-h);box-shadow:0 2px 10px rgba(0,0,0,.08)}
-.vc.act{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
+.vc:hover{border-color:var(--accent);box-shadow:0 0 12px var(--glow-soft),0 4px 16px rgba(0,0,0,.4);transform:translateY(-2px)}
+.vc.act{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 0 14px var(--cyan-glow)}
+.vc.act::before{
+    content:'PLAYING';position:absolute;top:6px;left:6px;z-index:2;
+    font-size:9px;font-weight:700;letter-spacing:1px;
+    padding:2px 6px;border-radius:2px;
+    background:var(--cyan);color:#0d0b1f;
+    box-shadow:0 0 8px var(--cyan-glow);
+}
 .vt{
-    width:100%;aspect-ratio:16/9;background:#e8e4dc;overflow:hidden;
+    width:100%;aspect-ratio:16/9;background:#0a0819;overflow:hidden;
     display:flex;align-items:center;justify-content:center;position:relative;
 }
 .vt img{width:100%;height:100%;object-fit:cover}
-.vt>svg{width:24px;height:24px;color:var(--txt2);opacity:.3}
+.vt>svg{width:28px;height:28px;color:var(--accent);opacity:.35}
 .vt .ov{
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    background:rgba(0,0,0,.35);opacity:0;transition:opacity .15s;
+    background:linear-gradient(180deg,transparent 40%,rgba(13,11,31,.85));
+    opacity:0;transition:opacity .15s;
 }
 .vc:hover .ov{opacity:1}
-.ov svg{width:24px;height:24px;color:#fff;filter:drop-shadow(0 1px 3px rgba(0,0,0,.3))}
-.vi{padding:8px 10px}
-.vi-n{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.vi-s{font-size:11px;color:var(--txt2);margin-top:2px}
+.ov svg{width:32px;height:32px;color:var(--cyan);filter:drop-shadow(0 0 8px var(--cyan-glow))}
+.vi{padding:9px 11px;border-top:1px solid var(--border)}
+.vi-n{font-size:12px;font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vi-s{font-size:11px;color:var(--txt2);margin-top:3px;font-variant-numeric:tabular-nums}
 .vr{
-    position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;
-    border:none;cursor:pointer;background:rgba(0,0,0,.5);color:#fff;
-    display:none;align-items:center;justify-content:center;z-index:1;transition:all .1s;
+    position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:3px;
+    border:1px solid transparent;cursor:pointer;
+    background:rgba(13,11,31,.8);color:var(--txt2);
+    display:none;align-items:center;justify-content:center;z-index:3;transition:all .1s;
 }
 .vc:hover .vr{display:flex}
-.vr:hover{background:var(--red)}
+.vr:hover{background:var(--red);color:#fff;border-color:var(--red)}
 .vr svg{width:10px;height:10px}
 
 /* footer */
 .foot{
-    padding:6px 16px;border-top:1px solid var(--border);background:var(--surface);
+    padding:7px 18px;border-top:1px solid var(--border);
+    background:linear-gradient(180deg,#15112f 0%,#0d0b1f 100%);
     display:flex;justify-content:space-between;align-items:center;
-    font-size:11px;color:var(--txt2);flex-shrink:0;
+    font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;
+    color:var(--txt2);flex-shrink:0;
 }
-.foot .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle}
+.foot .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:middle;box-shadow:0 0 6px rgba(74,222,128,.6);animation:pulse 2s ease-in-out infinite}
+
+/* ── Resize cursor (forced via body class, !important beats per-element cursors) ── */
+body.rz-ew,body.rz-ew *{cursor:ew-resize !important}
+body.rz-ns,body.rz-ns *{cursor:ns-resize !important}
+body.rz-nwse,body.rz-nwse *{cursor:nwse-resize !important}
+body.rz-nesw,body.rz-nesw *{cursor:nesw-resize !important}
+
+/* ── Gamepad ── */
+.gp-focused{
+    outline:2px solid var(--cyan) !important;
+    outline-offset:2px;
+    box-shadow:0 0 14px var(--cyan-glow),0 0 0 1px var(--cyan) !important;
+    z-index:2;position:relative;
+}
+.gp-focused.vc{transform:translateY(-2px)}
+.toast{
+    position:fixed;top:52px;left:50%;transform:translateX(-50%);
+    padding:8px 18px;border:1px solid var(--accent);border-radius:4px;
+    background:var(--surface);color:var(--txt);
+    font-size:12px;font-weight:600;letter-spacing:1px;
+    box-shadow:0 0 16px var(--glow),0 4px 20px rgba(0,0,0,.5);
+    opacity:0;transition:opacity .25s,transform .25s;
+    pointer-events:none;z-index:999;
+    display:flex;align-items:center;gap:10px;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(4px)}
+.toast .gp-ico{
+    width:14px;height:14px;border-radius:50%;
+    background:var(--cyan);box-shadow:0 0 8px var(--cyan-glow);
+    flex-shrink:0;
+}
+.gp-badge{
+    display:none;align-items:center;gap:6px;
+    padding:2px 8px;border:1px solid var(--cyan);border-radius:3px;
+    background:rgba(64,214,247,.1);color:var(--cyan);
+    font-size:10px;font-weight:700;letter-spacing:1px;
+}
+.gp-badge.on{display:inline-flex}
+.gp-badge::before{
+    content:'';width:6px;height:6px;border-radius:50%;
+    background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow);
+}
 </style>
 </head>
 <body>
@@ -298,8 +394,14 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
 <!-- FOOTER -->
 <div class="foot">
     <span>ko-desktop</span>
-    <span><span class="dot"></span>运行中</span>
+    <span style="display:flex;align-items:center;gap:10px">
+        <span class="gp-badge" id="gpBadge">手柄</span>
+        <span><span class="dot"></span>运行中</span>
+    </span>
 </div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"><span class="gp-ico"></span><span id="toastTxt"></span></div>
 
 <script>
 const pending = new Map();
@@ -322,6 +424,53 @@ const hasWV = typeof window !== 'undefined' && 'chrome' in window && 'webview' i
         if (hasWV) window.chrome.webview.postMessage({ id: -999, cmd: 'panel.moveBy', args: { x: mx, y: my } });
     });
     document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+// ── Window edge resize (Tauri/Wails style) ──
+(function(){
+    const EDGE = 6; // px hit zone on each edge
+    const classMap = {
+        'left': 'rz-ew', 'right': 'rz-ew',
+        'top': 'rz-ns', 'bottom': 'rz-ns',
+        'top-left': 'rz-nwse', 'bottom-right': 'rz-nwse',
+        'top-right': 'rz-nesw', 'bottom-left': 'rz-nesw'
+    };
+    let curEdge = null;
+
+    function detectEdge(e) {
+        const w = window.innerWidth, h = window.innerHeight;
+        const x = e.clientX, y = e.clientY;
+        const L = x < EDGE, R = x >= w - EDGE;
+        const T = y < EDGE, B = y >= h - EDGE;
+        if (T && L) return 'top-left';
+        if (T && R) return 'top-right';
+        if (B && L) return 'bottom-left';
+        if (B && R) return 'bottom-right';
+        if (L) return 'left';
+        if (R) return 'right';
+        if (T) return 'top';
+        if (B) return 'bottom';
+        return null;
+    }
+
+    function setEdge(edge) {
+        if (edge === curEdge) return;
+        if (curEdge) document.body.classList.remove(classMap[curEdge]);
+        curEdge = edge;
+        if (edge) document.body.classList.add(classMap[edge]);
+    }
+
+    document.addEventListener('mousemove', e => setEdge(detectEdge(e)));
+
+    document.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        const edge = detectEdge(e);
+        if (edge) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            invoke('panel.startResize', { edge });
+        }
+    }, true); // capture phase so we beat titlebar drag & other handlers
 })();
 
 // ── Column resizer ──
@@ -529,6 +678,211 @@ document.getElementById('btnAddFiles').onclick = async () => {
 document.getElementById('btnAddFolder').onclick = async () => {
     try { const f = await invoke('library.addFolder'); if (f && f.length) addEntries(f); } catch {}
 };
+
+// ══════════════════════════════════════════════════════
+//  Gamepad input (Xbox / PS standard mapping)
+//    Stick/D-pad → navigate
+//    A → confirm · B → close panel
+//    X → remove selected card · Y → play/pause wallpaper
+//    LB/RB → volume ±10% · LT/RT → speed ±0.25x
+//    Start → toggle mute · Back → import files
+// ══════════════════════════════════════════════════════
+(function(){
+    const FOCUS_SEL = 'button:not([disabled]), input[type=range], .tgl, .vc';
+    let gpIndex = -1;
+    let focusEl = null;
+    let prevBtns = {};
+    let lastNavAt = 0;
+    const NAV_REPEAT_MS = 180;
+    const DEAD = 0.35;
+
+    const toast = document.getElementById('toast');
+    const toastTxt = document.getElementById('toastTxt');
+    const badge = document.getElementById('gpBadge');
+    let toastTimer = 0;
+    function showToast(msg) {
+        toastTxt.textContent = msg;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    function getFocusables() {
+        return [...document.querySelectorAll(FOCUS_SEL)]
+            .filter(el => {
+                if (el.offsetParent === null) return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            });
+    }
+
+    function setFocus(el) {
+        if (focusEl === el) return;
+        if (focusEl) focusEl.classList.remove('gp-focused');
+        focusEl = el;
+        if (el) {
+            el.classList.add('gp-focused');
+            // Ensure visible in scroll container
+            el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    function clearFocus() {
+        if (focusEl) focusEl.classList.remove('gp-focused');
+        focusEl = null;
+    }
+
+    function centerOf(el) {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width/2, y: r.top + r.height/2, r };
+    }
+
+    // 2D geometric nearest-neighbor in a direction
+    function findNeighbor(current, dir) {
+        if (!current) {
+            const list = getFocusables();
+            return list[0] || null;
+        }
+        const src = centerOf(current);
+        const candidates = getFocusables().filter(e => e !== current);
+        let best = null, bestScore = Infinity;
+        for (const el of candidates) {
+            const c = centerOf(el);
+            const dx = c.x - src.x, dy = c.y - src.y;
+            let ok = false;
+            if (dir === 'right' && dx > 6)  ok = true;
+            if (dir === 'left'  && dx < -6) ok = true;
+            if (dir === 'down'  && dy > 6)  ok = true;
+            if (dir === 'up'    && dy < -6) ok = true;
+            if (!ok) continue;
+            const primary   = (dir === 'left' || dir === 'right') ? Math.abs(dx) : Math.abs(dy);
+            const secondary = (dir === 'left' || dir === 'right') ? Math.abs(dy) : Math.abs(dx);
+            const score = primary + secondary * 2.5;
+            if (score < bestScore) { bestScore = score; best = el; }
+        }
+        return best || current;
+    }
+
+    function navigate(dir) {
+        const next = findNeighbor(focusEl, dir) || getFocusables()[0];
+        if (next) setFocus(next);
+    }
+
+    function activate() {
+        if (!focusEl) return;
+        if (focusEl.tagName === 'INPUT' && focusEl.type === 'range') return; // sliders via shoulder buttons
+        focusEl.click();
+    }
+
+    function adjustSlider(id, delta) {
+        const s = document.getElementById(id);
+        if (!s) return;
+        const step = parseInt(s.step) || 1;
+        const min = parseInt(s.min), max = parseInt(s.max);
+        let v = parseInt(s.value) + delta * step;
+        v = Math.max(min, Math.min(max, v));
+        s.value = v;
+        s.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // Track mouse clicks to sync focus (mouse user may start, switch to gamepad mid-use)
+    document.addEventListener('click', e => {
+        const el = e.target.closest(FOCUS_SEL);
+        if (el && gpIndex !== -1) setFocus(el);
+    }, true);
+
+    function pollButton(gp, idx, onPress) {
+        const pressed = !!(gp.buttons[idx] && gp.buttons[idx].pressed);
+        const was = prevBtns[idx] || false;
+        if (pressed && !was) onPress();
+        prevBtns[idx] = pressed;
+    }
+
+    function pollGamepad() {
+        if (gpIndex === -1) return;
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = pads[gpIndex];
+        if (!gp) { requestAnimationFrame(pollGamepad); return; }
+
+        const now = performance.now();
+
+        // Navigation: left stick + D-pad
+        const lx = gp.axes[0] || 0, ly = gp.axes[1] || 0;
+        let navDir = null;
+        if (Math.abs(lx) > DEAD || Math.abs(ly) > DEAD) {
+            if (Math.abs(lx) > Math.abs(ly)) navDir = lx > 0 ? 'right' : 'left';
+            else navDir = ly > 0 ? 'down' : 'up';
+        }
+        // D-pad overrides stick (buttons 12-15: up/down/left/right)
+        if (gp.buttons[12] && gp.buttons[12].pressed) navDir = 'up';
+        else if (gp.buttons[13] && gp.buttons[13].pressed) navDir = 'down';
+        else if (gp.buttons[14] && gp.buttons[14].pressed) navDir = 'left';
+        else if (gp.buttons[15] && gp.buttons[15].pressed) navDir = 'right';
+
+        if (navDir) {
+            if (now - lastNavAt > NAV_REPEAT_MS) {
+                navigate(navDir);
+                lastNavAt = now;
+            }
+        } else {
+            lastNavAt = 0;
+        }
+
+        // Face buttons (standard mapping: A=0 B=1 X=2 Y=3)
+        pollButton(gp, 0, () => activate());                             // A
+        pollButton(gp, 1, () => invoke('panel.hide'));                   // B → close
+        pollButton(gp, 2, () => {                                        // X → remove card
+            if (focusEl && focusEl.classList.contains('vc')) {
+                const rm = focusEl.querySelector('.vr');
+                if (rm) rm.click();
+            }
+        });
+        pollButton(gp, 3, () => document.getElementById('btnPlayPause').click()); // Y
+
+        // Shoulders: volume ± (4=LB, 5=RB)
+        pollButton(gp, 4, () => adjustSlider('volumeSlider', -10));
+        pollButton(gp, 5, () => adjustSlider('volumeSlider',  10));
+
+        // Triggers: speed ± (6=LT, 7=RT)
+        pollButton(gp, 6, () => adjustSlider('speedSlider', -1));
+        pollButton(gp, 7, () => adjustSlider('speedSlider',  1));
+
+        // 8=Back/Select → import files  9=Start → toggle mute
+        pollButton(gp, 8, () => document.getElementById('btnAddFiles').click());
+        pollButton(gp, 9, () => document.getElementById('muteToggle').click());
+
+        requestAnimationFrame(pollGamepad);
+    }
+
+    window.addEventListener('gamepadconnected', e => {
+        if (gpIndex !== -1) return;
+        gpIndex = e.gamepad.index;
+        badge.classList.add('on');
+        showToast('手柄已连接: ' + (e.gamepad.id || '未知型号').split('(')[0].trim());
+        // initial focus — first transport button
+        const initial = document.getElementById('btnPlayPause') || getFocusables()[0];
+        if (initial) setFocus(initial);
+        requestAnimationFrame(pollGamepad);
+    });
+
+    window.addEventListener('gamepaddisconnected', e => {
+        if (e.gamepad.index === gpIndex) {
+            gpIndex = -1;
+            prevBtns = {};
+            badge.classList.remove('on');
+            clearFocus();
+            showToast('手柄已断开');
+        }
+    });
+
+    // Clear focus ring on actual mouse movement so mouse users don't see stuck ring
+    let lastMouse = 0;
+    document.addEventListener('mousemove', () => {
+        const now = performance.now();
+        if (now - lastMouse > 100 && focusEl && gpIndex === -1) clearFocus();
+        lastMouse = now;
+    });
+})();
 
 refreshState();
 loadLibrary();

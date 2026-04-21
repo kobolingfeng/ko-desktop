@@ -418,6 +418,7 @@ static void restoreDesktop() {
 
 static bool g_panelVisible = false;
 static const int RESIZE_BORDER = 6;
+static void applyPanelDwmAttrs();
 
 static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
@@ -456,6 +457,16 @@ static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         mmi->ptMinTrackSize = { 600, 400 };
         return 0;
     }
+    case WM_ACTIVATE:
+        // DWM resets border color on focus change — reassert ours every time.
+        applyPanelDwmAttrs();
+        break;
+    case WM_NCACTIVATE:
+        // Reassert DWM attrs then tell DefWindowProc "handled, don't repaint NC"
+        // by passing -1 as lParam. Without this DWM redraws the outer border
+        // in the system accent color when the window loses focus.
+        applyPanelDwmAttrs();
+        return DefWindowProcW(h, m, w, -1);
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -480,7 +491,7 @@ static void setupPanelWebView(ICoreWebView2Controller* ctrl) {
 
     ComPtr<ICoreWebView2Controller2> ctrl2;
     if (SUCCEEDED(g_panelCtrl.As(&ctrl2))) {
-        ctrl2->put_DefaultBackgroundColor({255, 240, 237, 230}); // #f0ede6 light bg
+        ctrl2->put_DefaultBackgroundColor({255, 13, 11, 31}); // #0d0b1f dark purple
     }
 
     // Virtual host mapping for panel
@@ -514,43 +525,70 @@ static void setupPanelWebView(ICoreWebView2Controller* ctrl) {
     }
 }
 
-static const int PANEL_W = 720;
-
 static void createPanelWindow(HINSTANCE hi) {
     WNDCLASSEXW pc{sizeof(pc)};
     pc.lpfnWndProc   = PanelWndProc;
     pc.hInstance      = hi;
     pc.lpszClassName  = L"KoDesktop_Panel";
     pc.hCursor        = LoadCursorW(nullptr, IDC_ARROW);
-    pc.hbrBackground  = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    pc.hbrBackground  = CreateSolidBrush(RGB(13, 11, 31)); // #0d0b1f dark purple
     pc.hIcon          = LoadIconW(hi, MAKEINTRESOURCE(IDI_APP));
     pc.hIconSm        = (HICON)LoadImageW(hi, MAKEINTRESOURCE(IDI_APP),
         IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     if (!pc.hIcon) { pc.hIcon = LoadIconW(nullptr, IDI_APPLICATION); pc.hIconSm = pc.hIcon; }
     RegisterClassExW(&pc);
 
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    int panelH = min(780, screenH * 85 / 100);
-    int sx = (GetSystemMetrics(SM_CXSCREEN) - PANEL_W) / 2;
-    int sy = (screenH - panelH) / 2;
+    // Primary monitor work area — DPI aware via PER_MONITOR_AWARE_V2 context
+    RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    int screenW = wa.right - wa.left;
+    int screenH = wa.bottom - wa.top;
 
+    // ~83% of work area, with sane floor; respects DPI implicitly
+    int panelW = max(900, screenW * 83 / 100);
+    int panelH = max(600, screenH * 83 / 100);
+    int sx = wa.left + (screenW - panelW) / 2;
+    int sy = wa.top  + (screenH - panelH) / 2;
+
+    // Pure frameless + resizable. WS_SYSMENU/WS_MINIMIZEBOX would make DWM paint
+    // a caption strip at the top (the white/light bar that flashes on focus).
+    // WS_EX_APPWINDOW keeps the window in taskbar; SW_MINIMIZE works without MINIMIZEBOX.
     g_panelHwnd = CreateWindowExW(
         WS_EX_APPWINDOW,
         L"KoDesktop_Panel", L"动态壁纸",
-        WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN,
-        sx, sy, PANEL_W, panelH,
+        WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN,
+        sx, sy, panelW, panelH,
         nullptr, nullptr, hi, nullptr);
 
-    // Win11 rounded corners + shadow
-    if (g_panelHwnd) {
-        // DWMWCP_ROUND = 2
-        DWORD pref = 2;
-        DwmSetWindowAttribute(g_panelHwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
-            &pref, sizeof(pref));
-        // Enable shadow for WS_POPUP via MARGINS
-        MARGINS m = {1,1,1,1};
-        DwmExtendFrameIntoClientArea(g_panelHwnd, &m);
-    }
+    if (g_panelHwnd) applyPanelDwmAttrs();
+}
+
+// Apply DWM visual attributes. Called at creation AND on WM_ACTIVATE / WM_NCACTIVATE
+// because DWM re-asserts its default border color on focus change in Win11.
+static void applyPanelDwmAttrs() {
+    if (!g_panelHwnd) return;
+
+    // Rounded corners + native shadow
+    DWORD corner = 2; // DWMWCP_ROUND
+    DwmSetWindowAttribute(g_panelHwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
+        &corner, sizeof(corner));
+
+    // DWMWA_SYSTEMBACKDROP_TYPE = 38; DWMSBT_NONE = 1. Disable any backdrop
+    // effects (Mica/Acrylic) so DWM has no reason to paint a frame.
+    DWORD backdrop = 1;
+    DwmSetWindowAttribute(g_panelHwnd, 38 /*DWMWA_SYSTEMBACKDROP_TYPE*/,
+        &backdrop, sizeof(backdrop));
+
+    // DWMWA_BORDER_COLOR = 34. COLOR_NONE hides the outer 1px border entirely
+    // — like Tauri/Wails frameless windows.
+    COLORREF border = 0xFFFFFFFE; // DWMWA_COLOR_NONE
+    DwmSetWindowAttribute(g_panelHwnd, 34 /*DWMWA_BORDER_COLOR*/,
+        &border, sizeof(border));
+
+    // Tell DWM the entire client area is glass with no extended frame.
+    // This is the piece Tauri/Wails do that we were missing — without it DWM
+    // reserves/paints a system frame outside our content.
+    MARGINS m = {0, 0, 0, 0};
+    DwmExtendFrameIntoClientArea(g_panelHwnd, &m);
 }
 
 static void initPanelWebView() {
@@ -566,7 +604,11 @@ static void initPanelWebView() {
 
 static void showPanel() {
     if (!g_panelHwnd) return;
-    if (g_panelVisible) { SetForegroundWindow(g_panelHwnd); return; }
+    if (g_panelVisible) {
+        if (IsIconic(g_panelHwnd)) ShowWindow(g_panelHwnd, SW_RESTORE);
+        SetForegroundWindow(g_panelHwnd);
+        return;
+    }
     ShowWindow(g_panelHwnd, SW_SHOW);
     SetForegroundWindow(g_panelHwnd);
     g_panelVisible = true;
@@ -745,6 +787,27 @@ static void reg_wallpaper_ctrl() {
         RECT r; GetWindowRect(g_panelHwnd, &r);
         SetWindowPos(g_panelHwnd, nullptr, r.left + dx, r.top + dy, 0, 0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        return true;
+    });
+
+    // Start a native resize drag. Frontend invokes this when user mousedowns
+    // at a window edge — lets Windows drive the resize (correct cursors, snap,
+    // aero-shake, etc.) without us needing to paint a resize border.
+    ipc_on("panel.startResize", [](const json& a) -> json {
+        if (!g_panelHwnd) return false;
+        auto edge = a.value("edge", std::string{});
+        WPARAM hit = 0;
+        if      (edge == "left")         hit = HTLEFT;
+        else if (edge == "right")        hit = HTRIGHT;
+        else if (edge == "top")          hit = HTTOP;
+        else if (edge == "bottom")       hit = HTBOTTOM;
+        else if (edge == "top-left")     hit = HTTOPLEFT;
+        else if (edge == "top-right")    hit = HTTOPRIGHT;
+        else if (edge == "bottom-left")  hit = HTBOTTOMLEFT;
+        else if (edge == "bottom-right") hit = HTBOTTOMRIGHT;
+        if (!hit) return false;
+        ReleaseCapture();
+        PostMessageW(g_panelHwnd, WM_NCLBUTTONDOWN, hit, 0);
         return true;
     });
 
@@ -1193,11 +1256,11 @@ static LRESULT CALLBACK MsgWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_TRAYICON:
         switch (LOWORD(l)) {
         case WM_LBUTTONUP:
-            g_panelVisible ? hidePanel() : showPanel();
+            showPanel();
             ipc_emit("tray.click");
             break;
         case WM_LBUTTONDBLCLK:
-            if (!g_panelVisible) showPanel();
+            showPanel();
             ipc_emit("tray.doubleClick");
             break;
         case WM_RBUTTONUP:    ipc_emit("tray.rightClick"); break;
@@ -1356,10 +1419,13 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, LPWSTR, int) {
     ShowWindow(g_hwnd, SW_SHOW);
     UpdateWindow(g_hwnd);
 
-    // Create panel window (hidden until user opens it; WebView2 created after env ready)
+    // Create panel window (WebView2 created after env ready)
     createPanelWindow(hi);
 
     init_webview();
+
+    // Show panel by default on launch
+    showPanel();
 
     // Message loop
     MSG msg;
