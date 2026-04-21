@@ -457,16 +457,10 @@ static LRESULT CALLBACK PanelWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         mmi->ptMinTrackSize = { 600, 400 };
         return 0;
     }
-    case WM_ACTIVATE:
-        // DWM resets border color on focus change — reassert ours every time.
-        applyPanelDwmAttrs();
-        break;
     case WM_NCACTIVATE:
-        // Reassert DWM attrs then tell DefWindowProc "handled, don't repaint NC"
-        // by passing -1 as lParam. Without this DWM redraws the outer border
-        // in the system accent color when the window loses focus.
-        applyPanelDwmAttrs();
-        return DefWindowProcW(h, m, w, -1);
+        // Prevent DefWindowProc from repainting the (non-existent) non-client
+        // area on focus change. Classic frameless technique.
+        return TRUE;
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -562,8 +556,8 @@ static void createPanelWindow(HINSTANCE hi) {
     if (g_panelHwnd) applyPanelDwmAttrs();
 }
 
-// Apply DWM visual attributes. Called at creation AND on WM_ACTIVATE / WM_NCACTIVATE
-// because DWM re-asserts its default border color on focus change in Win11.
+// Set DWM visual attributes once at creation. With WebView2 filling the full
+// client area and no inset, the 1px DWM border doesn't need per-focus reapply.
 static void applyPanelDwmAttrs() {
     if (!g_panelHwnd) return;
 
