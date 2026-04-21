@@ -2,8 +2,11 @@
 import { dialog, fs, app, tray, menu, media } from './api';
 import { invoke, on } from './ipc';
 
+type PlaybackMode = 'loop-one' | 'loop-list';
+
 const video = document.getElementById('player') as HTMLVideoElement;
 let currentVideoPath = '';
+let playbackMode: PlaybackMode = 'loop-one';
 
 // ── State sync with native ──────────────────
 
@@ -14,13 +17,31 @@ function reportState() {
         muted: video.muted,
         paused: video.paused,
         videoPath: currentVideoPath,
+        playbackMode,
     }).catch(() => {});
 }
 
-video.addEventListener('play', reportState);
-video.addEventListener('pause', reportState);
-video.addEventListener('volumechange', reportState);
-video.addEventListener('ratechange', reportState);
+video.addEventListener('play', () => { reportState(); });
+video.addEventListener('pause', () => { reportState(); });
+video.addEventListener('volumechange', () => { reportState(); scheduleSave(); });
+video.addEventListener('ratechange', () => { reportState(); scheduleSave(); });
+
+// Playlist advance: when a video ends in loop-list mode, load the next one.
+// (In loop-one mode video.loop=true and 'ended' doesn't fire.)
+video.addEventListener('ended', async () => {
+    if (playbackMode !== 'loop-list') return;
+    try {
+        const lib: Array<{ path: string }> = await invoke('library.load');
+        if (!lib || !lib.length) return;
+        const idx = lib.findIndex(v => v.path === currentVideoPath);
+        const next = lib[(idx + 1) % lib.length];
+        if (next && next.path) await playVideo(next.path);
+    } catch {}
+});
+
+function applyPlaybackMode() {
+    video.loop = playbackMode === 'loop-one';
+}
 
 // Listen for commands from the panel (via native)
 on('wallpaper.play', () => video.play());
@@ -29,6 +50,12 @@ on('wallpaper.restart', () => { video.currentTime = 0; });
 on('wallpaper.setSpeed', (d: any) => { video.playbackRate = d.rate; });
 on('wallpaper.setVolume', (d: any) => { video.volume = d.volume; });
 on('wallpaper.setMuted', (d: any) => { video.muted = d.muted; });
+on('wallpaper.setPlaybackMode', (d: any) => {
+    playbackMode = d.mode === 'loop-list' ? 'loop-list' : 'loop-one';
+    applyPlaybackMode();
+    reportState();
+    scheduleSave();
+});
 on('wallpaper.pickVideo', () => pickVideo());
 on('wallpaper.setVideo', async (d: any) => {
     if (d.path && d.filename) {
@@ -42,7 +69,15 @@ on('wallpaper.setVideo', async (d: any) => {
 
 // ── Config persistence ───────────────────────
 
-async function loadConfig(): Promise<{ videoPath?: string; volume?: number; muted?: boolean; speed?: number }> {
+interface WallpaperConfig {
+    videoPath?: string;
+    volume?: number;
+    muted?: boolean;
+    speed?: number;
+    playbackMode?: PlaybackMode;
+}
+
+async function loadConfig(): Promise<WallpaperConfig> {
     try {
         const dir = await app.dataDir();
         const cfgPath = dir + '\\wallpaper.json';
@@ -63,9 +98,17 @@ async function saveConfig() {
                 volume: video.volume,
                 muted: video.muted,
                 speed: video.playbackRate,
-            })
+                playbackMode,
+            } satisfies WallpaperConfig)
         );
     } catch {}
+}
+
+// Debounce writes — volume slider fires many events; batch them.
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveTimer = undefined; saveConfig(); }, 400);
 }
 
 // ── Video playback ───────────────────────────
@@ -128,6 +171,8 @@ async function showTrayMenu() {
     if (cfg.volume !== undefined) video.volume = cfg.volume;
     if (cfg.muted !== undefined) video.muted = cfg.muted;
     if (cfg.speed !== undefined) video.playbackRate = cfg.speed;
+    if (cfg.playbackMode === 'loop-list') playbackMode = 'loop-list';
+    applyPlaybackMode();
 
     // Restore last video, or auto-load sample.mp4
     if (cfg.videoPath) {

@@ -176,8 +176,9 @@ static ComPtr<ICoreWebView2>            g_panelView;
 
 // Wallpaper state (shared between wallpaper + panel WebView2)
 static json g_wpState = {
-    {"speed", 1.0}, {"volume", 1.0}, {"muted", true},
-    {"paused", false}, {"videoPath", ""}
+    {"speed", 1.0}, {"volume", 1.0}, {"muted", false},
+    {"paused", false}, {"videoPath", ""},
+    {"playbackMode", "loop-one"} // "loop-one" | "loop-list"
 };
 
 // Embedded assets (single-exe mode)
@@ -661,9 +662,17 @@ static void reg_wallpaper_ctrl() {
     });
 
     ipc_on("wallpaper.setMuted", [](const json& a) -> json {
-        bool muted = a.value("muted", true);
+        bool muted = a.value("muted", false);
         g_wpState["muted"] = muted;
         ipc_emit("wallpaper.setMuted", {{"muted", muted}});
+        return true;
+    });
+
+    ipc_on("wallpaper.setPlaybackMode", [](const json& a) -> json {
+        auto mode = a.value("mode", std::string{"loop-one"});
+        if (mode != "loop-one" && mode != "loop-list") mode = "loop-one";
+        g_wpState["playbackMode"] = mode;
+        ipc_emit("wallpaper.setPlaybackMode", {{"mode", mode}});
         return true;
     });
 
